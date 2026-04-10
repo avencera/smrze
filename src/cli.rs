@@ -49,20 +49,20 @@ pub fn get_styles() -> Styles {
     long_version = env!("CARGO_PKG_VERSION"),
     arg_required_else_help = true,
     about = "Create a local-only diarized transcript from a media file or URL",
-    long_about = "smrze creates a local-only diarized transcript from a YouTube video, direct media URL, or local audio/video file, and can optionally add a local Apple foundation model summary on macOS",
-    after_help = "Examples:\n  smrze https://www.youtube.com/watch?v=jNQXAC9IVRw\n  smrze ./meeting.m4a --summary\n  smrze ./call.mp4 --output-dir ~/transcripts/call",
+    long_about = "smrze creates a local-only diarized transcript from a YouTube video, direct media URL, or local audio/video file, and can optionally add a local Apple foundation model summary on macOS. By default it prints results to stdout.",
+    after_help = "Examples:\n  smrze https://www.youtube.com/watch?v=jNQXAC9IVRw\n  smrze ./meeting.m4a --summary\n  smrze ./call.mp4 -o ~/transcripts/call",
     styles = get_styles()
 )]
 pub struct Args {
     /// Local media file or remote URL
     pub input: String,
-    /// Directory where transcript.txt should be written
-    #[arg(long)]
-    pub output_dir: Option<PathBuf>,
+    /// Directory where transcript.txt and summary.md should be written instead of stdout
+    #[arg(short, long, value_name = "DIR")]
+    pub output: Option<PathBuf>,
     /// Generate summary.md using the local Apple foundation model
     #[arg(long)]
     pub summary: bool,
-    /// Open transcript.txt after it is written
-    #[arg(short, long)]
+    /// Open the written output after it is created, requires --output
+    #[arg(long)]
     pub open: bool,
 }

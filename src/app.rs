@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, warn};
 
-use crate::audio::{audio_fingerprint, decode_audio, normalize_audio};
+use crate::audio::{decode_audio, normalize_audio};
 use crate::cli::Args;
 use crate::console;
 use crate::input::resolve_input;
@@ -25,6 +25,9 @@ use crate::workers::{DiarizationWorker, TranscriptionWorker};
 
 pub fn run() -> Result<()> {
     let args = Args::parse();
+    if args.open && args.output.is_none() {
+        return Err(eyre!("--open requires --output"));
+    }
     let app_paths = AppPaths::resolve()?;
     let run_token = format!("run-{}", now_millis()?);
     let initial_scratch_dir = app_paths.cache_dir.join("runs").join(&run_token);
@@ -80,22 +83,19 @@ fn run_inner(
     ));
     debug!("normalized {} samples", normalized_audio.len());
 
-    let logical_key = logical_key(&resolved_input.source_identity, normalized_audio.as_ref());
-    let run_paths = match app_paths.create_run(
-        &resolved_input.display_name,
-        &logical_key,
-        args.output_dir.as_deref(),
-        run_id,
-    ) {
-        Ok(run_paths) => run_paths,
-        Err(error) => {
-            cancel_workers(diarization_worker, transcription_worker);
-            return Err(error);
-        }
+    let run_paths = match args.output.as_deref() {
+        Some(output_dir) => match app_paths.create_run(output_dir, run_id) {
+            Ok(run_paths) => Some(run_paths),
+            Err(error) => {
+                cancel_workers(diarization_worker, transcription_worker);
+                return Err(error);
+            }
+        },
+        None => None,
     };
 
     let result = execute_pipeline(
-        &run_paths,
+        run_paths.as_ref(),
         &resolved_input.display_name,
         normalized_audio,
         diarization_worker,
@@ -103,20 +103,23 @@ fn run_inner(
         args.summary,
         args.open,
     );
-    if result.is_err() && !run_paths.final_path.exists() {
-        cleanup_failed_output(&run_paths)?;
+    if result.is_err()
+        && let Some(run_paths) = run_paths.as_ref()
+        && !run_paths.final_path.exists()
+    {
+        cleanup_failed_output(run_paths)?;
     }
     result
 }
 
 fn execute_pipeline(
-    run_paths: &RunPaths,
+    run_paths: Option<&RunPaths>,
     title: &str,
     normalized_audio: Arc<[f32]>,
     diarization_worker: DiarizationWorker,
     transcription_worker: TranscriptionWorker,
     generate_summary_file: bool,
-    open_transcript: bool,
+    open_output: bool,
 ) -> Result<()> {
     let diarization = match diarization_worker.run(Arc::clone(&normalized_audio)) {
         Ok(diarization) => diarization,
@@ -142,68 +145,67 @@ fn execute_pipeline(
 
     let turns = build_turns(&transcription.tokens, &diarization);
     let transcript = render_transcript(&turns);
-    let staged_path = stage_transcript(&run_paths.scratch_dir, &transcript)?;
-    commit_transcript(&staged_path, &run_paths.final_path)?;
-
-    if generate_summary_file {
+    let summary_markdown = if generate_summary_file {
         console::info("Generating summary");
         let summary_started = Instant::now();
         let summary = match generate_summary(title, &turns) {
             Ok(summary) => summary,
             Err(error) => {
-                remove_path_if_exists(&run_paths.summary_path)?;
+                if let Some(run_paths) = run_paths {
+                    remove_path_if_exists(&run_paths.summary_path)?;
+                }
                 return Err(error);
             }
         };
         let summary_markdown = render_markdown(&summary);
-        let staged_summary_path = stage_summary(&run_paths.scratch_dir, &summary_markdown)?;
-        commit_summary(&staged_summary_path, &run_paths.summary_path)?;
         console::success(format!(
             "Finished summary in {:.2}s",
             summary_started.elapsed().as_secs_f64()
         ));
-    }
+        Some(summary_markdown)
+    } else {
+        None
+    };
 
-    println!("{}", run_paths.final_path.display());
-    if generate_summary_file {
-        println!("{}", run_paths.summary_path.display());
-    }
-    if open_transcript {
-        let path_to_open = if generate_summary_file {
-            &run_paths.summary_path
-        } else {
-            &run_paths.final_path
-        };
-        open_path(path_to_open)?;
+    if let Some(run_paths) = run_paths {
+        let staged_path = stage_transcript(&run_paths.scratch_dir, &transcript)?;
+        commit_transcript(&staged_path, &run_paths.final_path)?;
+        if let Some(summary_markdown) = summary_markdown.as_deref() {
+            let staged_summary_path = stage_summary(&run_paths.scratch_dir, summary_markdown)?;
+            commit_summary(&staged_summary_path, &run_paths.summary_path)?;
+        }
+
+        println!("{}", run_paths.final_path.display());
+        if summary_markdown.is_some() {
+            println!("{}", run_paths.summary_path.display());
+        }
+        if open_output {
+            let path_to_open = if summary_markdown.is_some() {
+                &run_paths.summary_path
+            } else {
+                &run_paths.final_path
+            };
+            open_path(path_to_open)?;
+        }
+    } else {
+        print_stdout_output(&transcript, summary_markdown.as_deref());
     }
     Ok(())
 }
 
-fn cancel_workers(
-    diarization_worker: DiarizationWorker,
-    transcription_worker: TranscriptionWorker,
-) {
-    if let Err(error) = diarization_worker.cancel() {
-        warn!("Failed to stop diarization worker: {error:#}");
+fn print_stdout_output(transcript: &str, summary_markdown: Option<&str>) {
+    println!("{transcript}");
+    if let Some(summary_markdown) = summary_markdown {
+        if !transcript.is_empty() {
+            println!();
+        }
+        println!("{summary_markdown}");
     }
-    if let Err(error) = transcription_worker.cancel() {
-        warn!("Failed to stop transcription worker: {error:#}");
-    }
-}
-
-fn logical_key(source_identity: &str, normalized_audio: &[f32]) -> String {
-    let audio_hash = audio_fingerprint(normalized_audio);
-    blake3::hash(format!("v1\0{source_identity}\0{audio_hash}").as_bytes())
-        .to_hex()
-        .to_string()
 }
 
 fn cleanup_failed_output(run_paths: &RunPaths) -> Result<()> {
     remove_path_if_exists(&run_paths.final_path)?;
     remove_path_if_exists(&run_paths.summary_path)?;
-    if run_paths.user_provided_output_dir {
-        return Ok(());
-    }
 
     if is_dir_empty(&run_paths.final_dir)? {
         remove_path_if_exists(&run_paths.final_dir)?;
@@ -216,4 +218,16 @@ fn is_dir_empty(path: &Path) -> Result<bool> {
         return Ok(true);
     }
     Ok(std::fs::read_dir(path)?.next().is_none())
+}
+
+fn cancel_workers(
+    diarization_worker: DiarizationWorker,
+    transcription_worker: TranscriptionWorker,
+) {
+    if let Err(error) = diarization_worker.cancel() {
+        warn!("Failed to stop diarization worker: {error:#}");
+    }
+    if let Err(error) = transcription_worker.cancel() {
+        warn!("Failed to stop transcription worker: {error:#}");
+    }
 }

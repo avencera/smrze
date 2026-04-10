@@ -12,7 +12,6 @@ use crate::utils::{ensure_parent_dir, expand_path, file_stem_name, sanitize_name
 #[derive(Debug, Clone)]
 pub struct ResolvedInput {
     pub display_name: String,
-    pub source_identity: String,
     pub media_path: PathBuf,
 }
 
@@ -38,7 +37,6 @@ pub fn resolve_input(input: &str, downloads_dir: &Path) -> Result<ResolvedInput>
 
     Ok(ResolvedInput {
         display_name: sanitize_name(&file_stem_name(&path)?),
-        source_identity: format!("file:{}", path.display()),
         media_path: path,
     })
 }
@@ -51,7 +49,7 @@ fn resolve_url_input(input: &str, downloads_dir: &Path) -> Result<ResolvedInput>
     fs::create_dir_all(&download_dir)
         .with_context(|| format!("failed to create {}", download_dir.display()))?;
 
-    if let Some(resolved) = load_cached_download(input, &download_dir)? {
+    if let Some(resolved) = load_cached_download(&download_dir)? {
         return Ok(resolved);
     }
 
@@ -84,7 +82,6 @@ fn resolve_url_input(input: &str, downloads_dir: &Path) -> Result<ResolvedInput>
 
     Ok(ResolvedInput {
         display_name,
-        source_identity: format!("url:{input}"),
         media_path: normalized_audio_path,
     })
 }
@@ -116,7 +113,7 @@ fn ensure_command(command: &str) -> Result<()> {
     Err(eyre!("{command} is required but was not found in PATH"))
 }
 
-fn load_cached_download(input: &str, download_dir: &Path) -> Result<Option<ResolvedInput>> {
+fn load_cached_download(download_dir: &Path) -> Result<Option<ResolvedInput>> {
     let manifest_path = download_manifest_path(download_dir);
     if !manifest_path.exists() {
         return Ok(None);
@@ -150,7 +147,6 @@ fn load_cached_download(input: &str, download_dir: &Path) -> Result<Option<Resol
 
     Ok(Some(ResolvedInput {
         display_name: manifest.display_name,
-        source_identity: format!("url:{input}"),
         media_path: normalized_audio_path,
     }))
 }

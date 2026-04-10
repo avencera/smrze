@@ -209,15 +209,6 @@ pub fn normalize_audio(audio: &DecodedAudio) -> Vec<f32> {
     resample(&audio.samples, audio.sample_rate, SAMPLE_RATE)
 }
 
-pub fn audio_fingerprint(audio: &[f32]) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(&(audio.len() as u64).to_le_bytes());
-    for sample in audio {
-        hasher.update(&sample.to_le_bytes());
-    }
-    hasher.finalize().to_hex().to_string()
-}
-
 fn resample(data: &[f32], source_rate: u32, target_rate: u32) -> Vec<f32> {
     if source_rate == target_rate {
         return data.to_vec();
