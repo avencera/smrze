@@ -9,17 +9,16 @@ use speakrs::{
 };
 use std::path::Path;
 use std::time::Instant;
-
-use crate::console;
+use tracing::debug;
 
 pub fn ensure_transcription_models(scriptrs_cache_dir: &Path) -> Result<TranscriptionModelBundle> {
     let transcription_started = Instant::now();
     let transcription =
         ScriptModelManager::with_cache_dir(scriptrs_cache_dir.to_path_buf())?.ensure_long_form()?;
-    console::success(format!(
+    debug!(
         "Ensured transcription models in {:.2}s",
         transcription_started.elapsed().as_secs_f64()
-    ));
+    );
     Ok(transcription)
 }
 
@@ -28,10 +27,10 @@ pub fn ensure_diarization_models(speakrs_cache_dir: &Path) -> Result<Diarization
     let diarization_models_dir =
         SpeakerModelManager::with_cache_dir(speakrs_cache_dir.to_path_buf())?
             .ensure(ExecutionMode::CoreMl)?;
-    console::success(format!(
+    debug!(
         "Ensured diarization models in {:.2}s",
         diarization_started.elapsed().as_secs_f64()
-    ));
+    );
     Ok(DiarizationModelBundle::from_dir(diarization_models_dir))
 }
 
@@ -40,10 +39,10 @@ pub fn build_transcription_pipeline(
 ) -> Result<LongFormTranscriptionPipeline> {
     let transcription_started = Instant::now();
     let transcription = LongFormTranscriptionPipeline::from_bundle(bundle)?;
-    console::success(format!(
+    debug!(
         "Built transcription pipeline in {:.2}s",
         transcription_started.elapsed().as_secs_f64()
-    ));
+    );
     Ok(transcription)
 }
 
@@ -52,9 +51,9 @@ pub fn build_diarization_pipeline(
 ) -> Result<OwnedDiarizationPipeline> {
     let diarization_started = Instant::now();
     let diarization = OwnedDiarizationPipeline::from_bundle(bundle, ExecutionMode::CoreMl)?;
-    console::success(format!(
+    debug!(
         "Built diarization pipeline in {:.2}s",
         diarization_started.elapsed().as_secs_f64()
-    ));
+    );
     Ok(diarization)
 }

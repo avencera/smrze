@@ -62,6 +62,9 @@ pub struct Args {
     /// Generate summary.md using the local Apple foundation model
     #[arg(long)]
     pub summary: bool,
+    /// Suppress non-error logs and downloader progress output
+    #[arg(short, long)]
+    pub quiet: bool,
     /// Open the written output after it is created, requires --output
     #[arg(long)]
     pub open: bool,

@@ -18,7 +18,7 @@ duct = "1.1.1"
 hound = "3.5"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-scriptrs = { path = "../scriptrs", features = ["long-form"] }
+scriptrs = { git = "https://github.com/avencera/scriptrs.git", rev = "0bf7f26e685b3b8a990512d7d34630c0cf67c1dd", features = ["long-form"] }
 shellexpand = "3.1"
 speakrs = { path = "../speakrs", features = ["coreml"] }
 symphonia = { version = "0.5", features = ["all"] }

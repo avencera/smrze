@@ -2169,6 +2169,7 @@ dependencies = [
 [[package]]
 name = "scriptrs"
 version = "0.1.0"
+source = "git+https://github.com/avencera/scriptrs.git?rev=0bf7f26e685b3b8a990512d7d34630c0cf67c1dd#0bf7f26e685b3b8a990512d7d34630c0cf67c1dd"
 dependencies = [
  "block2",
  "hf-hub",

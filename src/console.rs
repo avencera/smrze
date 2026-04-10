@@ -1,9 +1,23 @@
 use colored::Colorize;
+use std::sync::{
+    LazyLock,
+    atomic::{AtomicBool, Ordering},
+};
 
-pub(crate) fn info(message: impl AsRef<str>) {
-    eprintln!("{} {}", "info".cyan().bold(), message.as_ref());
+static QUIET: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(false));
+
+pub(crate) fn set_quiet(quiet: bool) {
+    QUIET.store(quiet, Ordering::Relaxed);
 }
 
-pub(crate) fn success(message: impl AsRef<str>) {
-    eprintln!("{} {}", "done".green().bold(), message.as_ref());
+pub(crate) fn is_quiet() -> bool {
+    QUIET.load(Ordering::Relaxed)
+}
+
+pub(crate) fn info(message: impl AsRef<str>) {
+    if is_quiet() {
+        return;
+    }
+
+    eprintln!("{} {}", "info".cyan().bold(), message.as_ref());
 }

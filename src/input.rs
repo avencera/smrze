@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::console;
 use crate::utils::{ensure_parent_dir, expand_path, file_stem_name, sanitize_name, short_hash};
 
 #[derive(Debug, Clone)]
@@ -53,15 +54,22 @@ fn resolve_url_input(input: &str, downloads_dir: &Path) -> Result<ResolvedInput>
         return Ok(resolved);
     }
 
+    let quiet = console::is_quiet();
     let title = fetch_title(input).unwrap_or_else(|_| format!("input-{}", sanitize_name(input)));
     let template = download_dir.join("download.%(ext)s").display().to_string();
+    let mut args = vec!["-f", "bestaudio/best"];
+    if quiet {
+        args.extend(["--quiet", "--no-warnings"]);
+    }
+    args.extend(["-o", template.as_str(), input]);
 
-    cmd(
-        "yt-dlp",
-        ["-f", "bestaudio/best", "-o", template.as_str(), input],
-    )
-    .run()
-    .with_context(|| "failed to launch yt-dlp")?;
+    let download = cmd("yt-dlp", args).stdout_null();
+    let download = if quiet {
+        download.stderr_null()
+    } else {
+        download
+    };
+    download.run().with_context(|| "failed to launch yt-dlp")?;
 
     let media_path = find_downloaded_media(&download_dir)?;
     let normalized_audio_path = download_dir.join("audio.wav");
@@ -87,7 +95,20 @@ fn resolve_url_input(input: &str, downloads_dir: &Path) -> Result<ResolvedInput>
 }
 
 fn fetch_title(url: &str) -> Result<String> {
-    let title = cmd("yt-dlp", ["--print", "title", "--skip-download", url])
+    let quiet = console::is_quiet();
+    let mut args = vec!["--print", "title", "--skip-download"];
+    if quiet {
+        args.extend(["--quiet", "--no-warnings"]);
+    }
+    args.push(url);
+
+    let title_lookup = cmd("yt-dlp", args);
+    let title_lookup = if quiet {
+        title_lookup.stderr_null()
+    } else {
+        title_lookup
+    };
+    let title = title_lookup
         .read()
         .with_context(|| "failed to launch yt-dlp for title lookup")?
         .trim()

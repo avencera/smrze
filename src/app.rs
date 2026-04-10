@@ -1,4 +1,3 @@
-use clap::Parser;
 use color_eyre::{
     Result,
     eyre::{Context, eyre},
@@ -23,8 +22,8 @@ use crate::transcript::render_transcript;
 use crate::utils::now_millis;
 use crate::workers::{DiarizationWorker, TranscriptionWorker};
 
-pub fn run() -> Result<()> {
-    let args = Args::parse();
+pub fn run(args: Args) -> Result<()> {
+    console::set_quiet(args.quiet);
     if args.open && args.output.is_none() {
         return Err(eyre!("--open requires --output"));
     }
@@ -77,10 +76,10 @@ fn run_inner(
         return Err(eyre!("decoded audio was empty"));
     }
     let normalized_audio: Arc<[f32]> = normalized_audio.into();
-    console::success(format!(
+    debug!(
         "Decoded and normalized audio in {:.2}s",
         decode_started.elapsed().as_secs_f64()
-    ));
+    );
     debug!("normalized {} samples", normalized_audio.len());
 
     let run_paths = match args.output.as_deref() {
@@ -158,10 +157,10 @@ fn execute_pipeline(
             }
         };
         let summary_markdown = render_markdown(&summary);
-        console::success(format!(
+        debug!(
             "Finished summary in {:.2}s",
             summary_started.elapsed().as_secs_f64()
-        ));
+        );
         Some(summary_markdown)
     } else {
         None

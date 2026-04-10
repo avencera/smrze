@@ -16,3 +16,4 @@ mod utils;
 mod workers;
 
 pub use app::run;
+pub use cli::Args;

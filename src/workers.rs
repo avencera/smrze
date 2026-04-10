@@ -11,6 +11,7 @@ use std::sync::{
 };
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
+use tracing::debug;
 
 use crate::console;
 use crate::models::{
@@ -26,10 +27,10 @@ impl DiarizationWorker {
             let stage_started = Instant::now();
             let bundle = ensure_diarization_models(&cache_dir)?;
             let mut pipeline = build_diarization_pipeline(bundle)?;
-            console::success(format!(
+            debug!(
                 "Built diarization stage in {:.2}s",
                 stage_started.elapsed().as_secs_f64()
-            ));
+            );
 
             let audio = match request_rx.recv() {
                 Ok(audio) => audio,
@@ -46,10 +47,10 @@ impl DiarizationWorker {
                 .into_iter()
                 .next()
                 .ok_or_else(|| eyre!("diarization returned no results"))?;
-            console::success(format!(
+            debug!(
                 "Finished diarization in {:.2}s",
                 diarization_started.elapsed().as_secs_f64()
-            ));
+            );
 
             Ok(Some(diarization))
         }))
@@ -72,10 +73,10 @@ impl TranscriptionWorker {
             let stage_started = Instant::now();
             let bundle = ensure_transcription_models(&cache_dir)?;
             let pipeline = build_transcription_pipeline(bundle)?;
-            console::success(format!(
+            debug!(
                 "Built transcription stage in {:.2}s",
                 stage_started.elapsed().as_secs_f64()
-            ));
+            );
 
             let audio = match request_rx.recv() {
                 Ok(audio) => audio,
@@ -85,10 +86,10 @@ impl TranscriptionWorker {
             console::info("Running transcription");
             let transcription_started = Instant::now();
             let transcription = pipeline.run(audio.as_ref())?;
-            console::success(format!(
+            debug!(
                 "Finished transcription in {:.2}s",
                 transcription_started.elapsed().as_secs_f64()
-            ));
+            );
 
             Ok(Some(transcription))
         }))
