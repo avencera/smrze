@@ -1,3 +1,5 @@
+use tracing::error;
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -11,7 +13,7 @@ fn main() {
     color_eyre::install().expect("failed to install color-eyre");
 
     if let Err(error) = smrze::run() {
-        eprintln!("{error:#}");
+        error!("{error:#}");
         std::process::exit(1);
     }
 }

@@ -9,70 +9,52 @@ use speakrs::{
 };
 use std::path::Path;
 use std::time::Instant;
-use tracing::{debug, info};
 
-pub struct PrefetchedModels {
-    pub transcription: TranscriptionModelBundle,
-    pub diarization: DiarizationModelBundle,
-}
+use crate::console;
 
-pub fn ensure_models(
-    scriptrs_cache_dir: &Path,
-    speakrs_cache_dir: &Path,
-) -> Result<PrefetchedModels> {
-    let ensure_started = Instant::now();
-
-    debug!("ensuring transcription models");
+pub fn ensure_transcription_models(scriptrs_cache_dir: &Path) -> Result<TranscriptionModelBundle> {
     let transcription_started = Instant::now();
     let transcription =
         ScriptModelManager::with_cache_dir(scriptrs_cache_dir.to_path_buf())?.ensure_long_form()?;
-    info!(
+    console::success(format!(
         "Ensured transcription models in {:.2}s",
         transcription_started.elapsed().as_secs_f64()
-    );
+    ));
+    Ok(transcription)
+}
 
-    debug!("ensuring diarization models");
+pub fn ensure_diarization_models(speakrs_cache_dir: &Path) -> Result<DiarizationModelBundle> {
     let diarization_started = Instant::now();
     let diarization_models_dir =
         SpeakerModelManager::with_cache_dir(speakrs_cache_dir.to_path_buf())?
             .ensure(ExecutionMode::CoreMl)?;
-    info!(
+    console::success(format!(
         "Ensured diarization models in {:.2}s",
         diarization_started.elapsed().as_secs_f64()
-    );
-    info!(
-        "Ensured all model assets in {:.2}s",
-        ensure_started.elapsed().as_secs_f64()
-    );
-
-    Ok(PrefetchedModels {
-        transcription,
-        diarization: DiarizationModelBundle::from_dir(diarization_models_dir),
-    })
+    ));
+    Ok(DiarizationModelBundle::from_dir(diarization_models_dir))
 }
 
 pub fn build_transcription_pipeline(
     bundle: TranscriptionModelBundle,
 ) -> Result<LongFormTranscriptionPipeline> {
-    debug!("building transcription pipeline");
     let transcription_started = Instant::now();
     let transcription = LongFormTranscriptionPipeline::from_bundle(bundle)?;
-    info!(
+    console::success(format!(
         "Built transcription pipeline in {:.2}s",
         transcription_started.elapsed().as_secs_f64()
-    );
+    ));
     Ok(transcription)
 }
 
 pub fn build_diarization_pipeline(
     bundle: DiarizationModelBundle,
 ) -> Result<OwnedDiarizationPipeline> {
-    debug!("building diarization pipeline");
     let diarization_started = Instant::now();
     let diarization = OwnedDiarizationPipeline::from_bundle(bundle, ExecutionMode::CoreMl)?;
-    info!(
+    console::success(format!(
         "Built diarization pipeline in {:.2}s",
         diarization_started.elapsed().as_secs_f64()
-    );
+    ));
     Ok(diarization)
 }

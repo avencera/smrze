@@ -21,6 +21,7 @@ pub struct RunPaths {
     pub scratch_dir: PathBuf,
     pub final_dir: PathBuf,
     pub final_path: PathBuf,
+    pub summary_path: PathBuf,
     pub user_provided_output_dir: bool,
 }
 
@@ -96,10 +97,12 @@ impl AppPaths {
             }
         };
         let final_path = final_dir.join("transcript.txt");
+        let summary_path = final_dir.join("summary.md");
         Ok(RunPaths {
             scratch_dir,
             final_dir,
             final_path,
+            summary_path,
             user_provided_output_dir,
         })
     }

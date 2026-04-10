@@ -7,16 +7,32 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub fn stage_transcript(scratch_dir: &Path, transcript: &str) -> Result<PathBuf> {
+    stage_text_file(scratch_dir, "transcript.txt", transcript)
+}
+
+pub fn stage_summary(scratch_dir: &Path, summary: &str) -> Result<PathBuf> {
+    stage_text_file(scratch_dir, "summary.md", summary)
+}
+
+pub fn commit_summary(staged_path: &Path, final_path: &Path) -> Result<()> {
+    commit_file(staged_path, final_path)
+}
+
+pub fn commit_transcript(staged_path: &Path, final_path: &Path) -> Result<()> {
+    commit_file(staged_path, final_path)
+}
+
+fn stage_text_file(scratch_dir: &Path, file_name: &str, content: &str) -> Result<PathBuf> {
     let staging_dir = scratch_dir.join("final");
     fs::create_dir_all(&staging_dir)
         .with_context(|| format!("failed to create {}", staging_dir.display()))?;
-    let staged_path = staging_dir.join("transcript.txt");
-    fs::write(&staged_path, format!("{transcript}\n"))
+    let staged_path = staging_dir.join(file_name);
+    fs::write(&staged_path, format!("{content}\n"))
         .with_context(|| format!("failed to write {}", staged_path.display()))?;
     Ok(staged_path)
 }
 
-pub fn commit_transcript(staged_path: &Path, final_path: &Path) -> Result<()> {
+fn commit_file(staged_path: &Path, final_path: &Path) -> Result<()> {
     let final_dir = final_path
         .parent()
         .ok_or_else(|| eyre!("final path has no parent: {}", final_path.display()))?;
