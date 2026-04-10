@@ -10,6 +10,8 @@ const MERGE_GAP_SECONDS: f64 = 0.75;
 const DEFAULT_RAW_SPEAKER: &str = "SPEAKER_00";
 const SHORT_INTRUSION_SECONDS: f64 = 1.5;
 const MINORITY_SPEAKER_RATIO: f64 = 0.12;
+const PREFERRED_SPLIT_SECONDS: f64 = 12.0;
+const HARD_SPLIT_SECONDS: f64 = 30.0;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpeakerTurn {
@@ -60,20 +62,31 @@ fn collect_raw_turns(tokens: &[TimedToken], segments: &[Segment]) -> Vec<RawTurn
     let mut raw_turns: Vec<RawTurn> = Vec::new();
     for token in tokens.iter().filter(|token| !token.text.trim().is_empty()) {
         let speaker = assign_speaker(token, segments);
-        match raw_turns.last_mut() {
-            Some(current)
-                if current.speaker == speaker && token.start - current.end <= MERGE_GAP_SECONDS =>
-            {
-                current.end = token.end;
-                current.text.push_str(&token.text);
-            }
-            _ => raw_turns.push(RawTurn {
-                start: token.start,
-                end: token.end,
-                speaker,
-                text: token.text.clone(),
-            }),
+        let should_split_at_sentence = raw_turns.last().is_some_and(|current| {
+            current.should_split_after
+                && current.speaker == speaker
+                && token.start - current.end <= MERGE_GAP_SECONDS
+        });
+        if should_split_at_sentence {
+            raw_turns.push(RawTurn::new(token, speaker, true));
+            continue;
         }
+
+        let Some(current) = raw_turns.last_mut() else {
+            raw_turns.push(RawTurn::new(token, speaker, false));
+            continue;
+        };
+
+        if current.speaker != speaker || token.start - current.end > MERGE_GAP_SECONDS {
+            raw_turns.push(RawTurn::new(token, speaker, false));
+            continue;
+        }
+        if token.end - current.start > HARD_SPLIT_SECONDS {
+            raw_turns.push(RawTurn::new(token, speaker, true));
+            continue;
+        }
+
+        current.append_token(token);
     }
     raw_turns
 }
@@ -142,6 +155,7 @@ fn merge_raw_turns(turns: Vec<RawTurn>) -> Vec<RawTurn> {
         match merged.last_mut() {
             Some(current)
                 if current.speaker == turn.speaker
+                    && !turn.locked_from_previous
                     && turn.start - current.end <= MERGE_GAP_SECONDS =>
             {
                 current.end = turn.end;
@@ -210,12 +224,39 @@ struct RawTurn {
     end: f64,
     speaker: String,
     text: String,
+    locked_from_previous: bool,
+    should_split_after: bool,
 }
 
 impl RawTurn {
+    fn new(token: &TimedToken, speaker: String, locked_from_previous: bool) -> Self {
+        let mut turn = Self {
+            start: token.start,
+            end: token.end,
+            speaker,
+            text: token.text.clone(),
+            locked_from_previous,
+            should_split_after: false,
+        };
+        turn.should_split_after =
+            turn.duration() >= PREFERRED_SPLIT_SECONDS && token_ends_sentence(token);
+        turn
+    }
+
+    fn append_token(&mut self, token: &TimedToken) {
+        self.end = token.end;
+        self.text.push_str(&token.text);
+        self.should_split_after =
+            self.duration() >= PREFERRED_SPLIT_SECONDS && token_ends_sentence(token);
+    }
+
     fn duration(&self) -> f64 {
         self.end - self.start
     }
+}
+
+fn token_ends_sentence(token: &TimedToken) -> bool {
+    matches!(token.text.trim_end().chars().last(), Some('.' | '?' | '!'))
 }
 
 #[cfg(test)]
@@ -305,5 +346,72 @@ mod tests {
         );
         assert_eq!(turns.len(), 1);
         assert_eq!(turns[0].speaker, "Speaker 1");
+    }
+
+    #[test]
+    fn splits_at_sentence_boundary_after_preferred_duration() {
+        let diarization = diarization_result(Array2::zeros((0, 0)));
+        let turns = build_turns(
+            &[
+                token(0.0, 4.0, " hello"),
+                token(4.0, 8.0, " there"),
+                token(8.0, 12.4, " friend."),
+                token(12.4, 13.0, " next"),
+                token(13.0, 13.5, " thought"),
+            ],
+            &diarization,
+        );
+
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].speaker, "Speaker 1");
+        assert_eq!(turns[1].speaker, "Speaker 1");
+        assert_eq!(turns[0].start, 0.0);
+        assert_eq!(turns[0].end, 12.4);
+        assert_eq!(turns[0].text, "hello there friend.");
+        assert_eq!(turns[1].start, 12.4);
+        assert_eq!(turns[1].end, 13.5);
+        assert_eq!(turns[1].text, "next thought");
+    }
+
+    #[test]
+    fn forces_split_before_exceeding_hard_duration() {
+        let diarization = diarization_result(Array2::zeros((0, 0)));
+        let turns = build_turns(
+            &[
+                token(0.0, 10.0, " one"),
+                token(10.0, 20.0, " two"),
+                token(20.0, 29.5, " three"),
+                token(29.5, 30.5, " four"),
+                token(30.5, 31.0, " five"),
+            ],
+            &diarization,
+        );
+
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].speaker, "Speaker 1");
+        assert_eq!(turns[1].speaker, "Speaker 1");
+        assert_eq!(turns[0].end, 29.5);
+        assert_eq!(turns[0].text, "one two three");
+        assert_eq!(turns[1].start, 29.5);
+        assert_eq!(turns[1].text, "four five");
+    }
+
+    #[test]
+    fn keeps_forced_same_speaker_splits_separate() {
+        let diarization = diarization_result(Array2::zeros((0, 0)));
+        let turns = build_turns(
+            &[
+                token(0.0, 6.0, " first"),
+                token(6.0, 12.0, " sentence."),
+                token(12.0, 18.0, " second"),
+                token(18.0, 24.5, " sentence."),
+            ],
+            &diarization,
+        );
+
+        assert_eq!(turns.len(), 2);
+        assert!(turns.iter().all(|turn| turn.speaker == "Speaker 1"));
+        assert_eq!(turns[0].text, "first sentence.");
+        assert_eq!(turns[1].text, "second sentence.");
     }
 }
