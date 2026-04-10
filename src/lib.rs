@@ -2,6 +2,9 @@ mod app;
 mod audio;
 mod cli;
 mod console;
+mod foundation_models;
+#[cfg(target_os = "macos")]
+mod foundation_models_bridge;
 mod input;
 mod models;
 mod output;

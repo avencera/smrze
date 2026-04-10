@@ -8,13 +8,14 @@ let package = Package(
         .macOS("26.0"),
     ],
     products: [
-        .executable(
-            name: "smrze-foundation-models",
+        .library(
+            name: "SmrzeFoundationModels",
+            type: .static,
             targets: ["SmrzeFoundationModels"]
         ),
     ],
     targets: [
-        .executableTarget(
+        .target(
             name: "SmrzeFoundationModels"
         ),
         .testTarget(

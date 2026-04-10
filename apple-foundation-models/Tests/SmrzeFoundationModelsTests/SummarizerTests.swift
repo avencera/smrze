@@ -5,10 +5,7 @@ import Testing
 func chunkTurnsRespectsCharacterBudget() {
     let summarizer = FoundationModelSummarizer()
     let turns = (0..<4).map { index in
-        SummaryTurn(
-            speaker: "Speaker 1",
-            text: String(repeating: "\(index)", count: 3_500)
-        )
+        "Speaker 1: " + String(repeating: "\(index)", count: 3_500)
     }
 
     let chunks = summarizer.chunkTurns(turns)
@@ -21,7 +18,7 @@ func chunkTurnsRespectsCharacterBudget() {
 func chunkSummariesPreservesOrdering() {
     let summarizer = FoundationModelSummarizer()
     let summaries = (0..<5).map { index in
-        SummaryResponse(
+        SummaryDocumentPayload(
             overview: "Overview \(index)",
             keyPoints: [String(repeating: "Point ", count: 200)],
             decisions: [],

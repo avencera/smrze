@@ -27,9 +27,33 @@ struct GeneratedSummary {
     @Guide(.maximumCount(6))
     let decisions: [String]
 
-    @Guide(description: "Concrete next steps and follow-ups only when the transcript explicitly mentions them. Return an empty array when there are none")
+    @Guide(description: "Concrete next steps and follow-ups only when the transcript explicitly mentions them. Return an empty array when the transcript does not state any")
     @Guide(.maximumCount(8))
     let actionItems: [GeneratedActionItem]
+}
+
+func summarizeTranscript(request: BridgeSummaryRequest) throws(BridgeSummaryError) -> BridgeSummaryDocument {
+    let payload = request.intoPayload()
+    let semaphore = DispatchSemaphore(value: 0)
+    let box = SummaryResultBox()
+
+    Task.detached {
+        do {
+            let summary = try await FoundationModelSummarizer().summarize(payload)
+            box.set(.success(summary))
+        } catch let error as BridgeSummaryError {
+            box.set(.failure(error))
+        } catch {
+            box.set(.failure(.Internal(message: RustString(error.localizedDescription))))
+        }
+        semaphore.signal()
+    }
+
+    semaphore.wait()
+    guard let result = box.get() else {
+        throw .Internal(message: RustString("summary generation finished without a result"))
+    }
+    return try result.get().intoBridge()
 }
 
 struct FoundationModelSummarizer {
@@ -40,43 +64,52 @@ struct FoundationModelSummarizer {
         maximumResponseTokens: 700
     )
 
-    func summarize(_ request: SummaryRequest) async throws -> SummaryResponse {
+    func summarize(_ request: SummaryRequestPayload) async throws(BridgeSummaryError) -> SummaryDocumentPayload {
         try validate(request)
         try validateModel()
 
         let chunkedTurns = chunkTurns(request.turns)
         let chunkSummaries = try await summarizeTurnGroups(request.title, groups: chunkedTurns)
-        let finalSummary = try await reduceSummaries(request.title, chunkSummaries)
-        return finalSummary
+        return try await reduceSummaries(request.title, chunkSummaries)
     }
 
-    private func validate(_ request: SummaryRequest) throws {
+    private func validate(_ request: SummaryRequestPayload) throws(BridgeSummaryError) {
         guard !request.turns.isEmpty else {
-            throw SummaryHelperError.invalidRequest("transcript contained no turns to summarize")
+            throw .Internal(message: RustString("transcript contained no turns to summarize"))
         }
     }
 
-    private func validateModel() throws {
+    private func validateModel() throws(BridgeSummaryError) {
         switch model.availability {
         case .available:
             break
         case let .unavailable(reason):
-            throw SummaryHelperError.unavailableModel(unavailableMessage(for: reason))
+            switch reason {
+            case .deviceNotEligible:
+                throw .DeviceNotEligible
+            case .appleIntelligenceNotEnabled:
+                throw .AppleIntelligenceNotEnabled
+            case .modelNotReady:
+                throw .ModelNotReady
+            @unknown default:
+                throw .Internal(message: RustString("Apple Intelligence is unavailable on this Mac"))
+            }
         }
 
         guard model.supportsLocale(Locale.current) else {
-            throw SummaryHelperError.unsupportedLocale(
-                "the local Apple foundation model does not support locale \(Locale.current.identifier)"
+            throw .UnsupportedLocale(
+                message: RustString(
+                    "the local Apple foundation model does not support locale \(Locale.current.identifier)"
+                )
             )
         }
     }
 
     private func summarizeTurnGroups(
         _ title: String,
-        groups: [[SummaryTurn]]
-    ) async throws -> [SummaryResponse] {
-        var summaries = [SummaryResponse]()
-        summaries.reserveCapacity(groups.count)
+        groups: [[String]]
+    ) async throws(BridgeSummaryError) -> [SummaryDocumentPayload] {
+        var summaries = [SummaryDocumentPayload]()
         for group in groups {
             let summary = try await summarizeTurnGroupRecursively(title, turns: group)
             summaries.append(summary)
@@ -86,8 +119,8 @@ struct FoundationModelSummarizer {
 
     private func summarizeTurnGroupRecursively(
         _ title: String,
-        turns: [SummaryTurn]
-    ) async throws -> SummaryResponse {
+        turns: [String]
+    ) async throws(BridgeSummaryError) -> SummaryDocumentPayload {
         let prompt = transcriptPrompt(title, turns: turns)
 
         do {
@@ -95,30 +128,34 @@ struct FoundationModelSummarizer {
             return mapSummary(generated)
         } catch let error as LanguageModelSession.GenerationError {
             guard case .exceededContextWindowSize = error else {
-                throw mapGenerationError(error)
+                throw await mapGenerationError(error)
             }
             guard turns.count > 1 else {
-                throw mapGenerationError(error)
+                throw await mapGenerationError(error)
             }
 
             let midpoint = turns.count / 2
             let left = try await summarizeTurnGroupRecursively(title, turns: Array(turns[..<midpoint]))
             let right = try await summarizeTurnGroupRecursively(title, turns: Array(turns[midpoint...]))
+
             return try await reduceSummaryGroupRecursively(title, summaries: [left, right])
+        } catch let error as BridgeSummaryError {
+            throw error
+        } catch {
+            throw .Internal(message: RustString(error.localizedDescription))
         }
     }
 
     private func reduceSummaries(
         _ title: String,
-        _ summaries: [SummaryResponse]
-    ) async throws -> SummaryResponse {
+        _ summaries: [SummaryDocumentPayload]
+    ) async throws(BridgeSummaryError) -> SummaryDocumentPayload {
         guard summaries.count > 1 else {
             return summaries[0]
         }
 
         let groups = chunkSummaries(summaries)
-        var merged = [SummaryResponse]()
-        merged.reserveCapacity(groups.count)
+        var merged = [SummaryDocumentPayload]()
         for group in groups {
             let summary = try await reduceSummaryGroupRecursively(title, summaries: group)
             merged.append(summary)
@@ -133,8 +170,8 @@ struct FoundationModelSummarizer {
 
     private func reduceSummaryGroupRecursively(
         _ title: String,
-        summaries: [SummaryResponse]
-    ) async throws -> SummaryResponse {
+        summaries: [SummaryDocumentPayload]
+    ) async throws(BridgeSummaryError) -> SummaryDocumentPayload {
         let prompt = reductionPrompt(title, summaries: summaries)
 
         do {
@@ -142,10 +179,10 @@ struct FoundationModelSummarizer {
             return mapSummary(generated)
         } catch let error as LanguageModelSession.GenerationError {
             guard case .exceededContextWindowSize = error else {
-                throw mapGenerationError(error)
+                throw await mapGenerationError(error)
             }
             guard summaries.count > 1 else {
-                throw mapGenerationError(error)
+                throw await mapGenerationError(error)
             }
 
             let midpoint = summaries.count / 2
@@ -157,7 +194,12 @@ struct FoundationModelSummarizer {
                 title,
                 summaries: Array(summaries[midpoint...])
             )
+
             return try await reduceSummaryGroupRecursively(title, summaries: [left, right])
+        } catch let error as BridgeSummaryError {
+            throw error
+        } catch {
+            throw .Internal(message: RustString(error.localizedDescription))
         }
     }
 
@@ -181,10 +223,8 @@ struct FoundationModelSummarizer {
         return response.content
     }
 
-    private func transcriptPrompt(_ title: String, turns: [SummaryTurn]) -> String {
-        let body = turns
-            .map(\.formattedText)
-            .joined(separator: "\n")
+    private func transcriptPrompt(_ title: String, turns: [String]) -> String {
+        let body = turns.joined(separator: "\n")
         return """
         Summarize this transcript chunk from "\(title)".
         Focus on the factual content only.
@@ -196,7 +236,7 @@ struct FoundationModelSummarizer {
         """
     }
 
-    private func reductionPrompt(_ title: String, summaries: [SummaryResponse]) -> String {
+    private func reductionPrompt(_ title: String, summaries: [SummaryDocumentPayload]) -> String {
         let body = summaries
             .enumerated()
             .map { index, summary in
@@ -224,13 +264,13 @@ struct FoundationModelSummarizer {
         """
     }
 
-    func chunkTurns(_ turns: [SummaryTurn]) -> [[SummaryTurn]] {
-        var groups = [[SummaryTurn]]()
-        var current = [SummaryTurn]()
+    func chunkTurns(_ turns: [String]) -> [[String]] {
+        var groups = [[String]]()
+        var current = [String]()
         var currentCharacters = 0
 
         for turn in turns {
-            let turnCharacters = turn.formattedText.count + 1
+            let turnCharacters = turn.count + 1
             let wouldOverflow = !current.isEmpty
                 && (currentCharacters + turnCharacters > chunkCharacterBudget
                     || current.count >= chunkTurnBudget)
@@ -251,9 +291,9 @@ struct FoundationModelSummarizer {
         return groups
     }
 
-    func chunkSummaries(_ summaries: [SummaryResponse]) -> [[SummaryResponse]] {
-        var groups = [[SummaryResponse]]()
-        var current = [SummaryResponse]()
+    func chunkSummaries(_ summaries: [SummaryDocumentPayload]) -> [[SummaryDocumentPayload]] {
+        var groups = [[SummaryDocumentPayload]]()
+        var current = [SummaryDocumentPayload]()
         var currentCharacters = 0
 
         for summary in summaries {
@@ -277,7 +317,7 @@ struct FoundationModelSummarizer {
         return groups
     }
 
-    private func serializedSummary(_ summary: SummaryResponse) -> String {
+    private func serializedSummary(_ summary: SummaryDocumentPayload) -> String {
         """
         Overview: \(summary.overview)
         Key points:
@@ -297,7 +337,7 @@ struct FoundationModelSummarizer {
         return values.map { "- \($0)" }.joined(separator: "\n")
     }
 
-    private func actionItemLines(_ values: [SummaryActionItem]) -> String {
+    private func actionItemLines(_ values: [SummaryActionItemPayload]) -> String {
         if values.isEmpty {
             return "- none"
         }
@@ -312,37 +352,21 @@ struct FoundationModelSummarizer {
         .joined(separator: "\n")
     }
 
-    private func mapSummary(_ generated: GeneratedSummary) -> SummaryResponse {
-        SummaryResponse(
+    private func mapSummary(_ generated: GeneratedSummary) -> SummaryDocumentPayload {
+        SummaryDocumentPayload(
             overview: generated.overview.trimmingCharacters(in: .whitespacesAndNewlines),
             keyPoints: uniqueNonPlaceholderStrings(generated.keyPoints),
             decisions: uniqueNonPlaceholderStrings(generated.decisions),
-            actionItems: uniqueActionItems(
-                generated.actionItems
-                .map { item in
-                    SummaryActionItem(
-                        owner: item.owner.map(trimmed).flatMap(optionalNotEmpty),
-                        task: trimmed(item.task)
-                    )
-                }
-            )
+            actionItems: uniqueActionItems(generated.actionItems)
         )
-    }
-
-    private func trimmed(_ value: String) -> String {
-        value.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private func optionalNotEmpty(_ value: String) -> String? {
-        value.isEmpty ? nil : value
     }
 
     private func uniqueNonPlaceholderStrings(_ values: [String]) -> [String] {
         var seen = Set<String>()
         var result = [String]()
         for value in values.map(trimmed) {
-            let normalized = normalizePlaceholder(value)
-            guard let cleaned = normalized, seen.insert(cleaned.lowercased()).inserted else {
+            guard let cleaned = normalizePlaceholder(value),
+                  seen.insert(cleaned.lowercased()).inserted else {
                 continue
             }
             result.append(cleaned)
@@ -350,9 +374,9 @@ struct FoundationModelSummarizer {
         return result
     }
 
-    private func uniqueActionItems(_ values: [SummaryActionItem]) -> [SummaryActionItem] {
+    private func uniqueActionItems(_ values: [GeneratedActionItem]) -> [SummaryActionItemPayload] {
         var seen = Set<String>()
-        var result = [SummaryActionItem]()
+        var result = [SummaryActionItemPayload]()
         for value in values {
             guard let task = normalizePlaceholder(value.task) else {
                 continue
@@ -367,9 +391,17 @@ struct FoundationModelSummarizer {
                 continue
             }
 
-            result.append(SummaryActionItem(owner: owner, task: task))
+            result.append(SummaryActionItemPayload(owner: owner, task: task))
         }
         return result
+    }
+
+    private func trimmed(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func optionalNotEmpty(_ value: String) -> String? {
+        value.isEmpty ? nil : value
     }
 
     private func normalizePlaceholder(_ value: String) -> String? {
@@ -391,29 +423,55 @@ struct FoundationModelSummarizer {
         }
     }
 
-    private func unavailableMessage(
-        for reason: SystemLanguageModel.Availability.UnavailableReason
-    ) -> String {
-        switch reason {
-        case .deviceNotEligible:
-            return "Apple Intelligence is unavailable because this Mac is not eligible"
-        case .appleIntelligenceNotEnabled:
-            return "Apple Intelligence is not enabled on this Mac"
-        case .modelNotReady:
-            return "Apple Intelligence models are not ready yet on this Mac"
-        @unknown default:
-            return "Apple Intelligence is unavailable on this Mac"
+    private func mapGenerationError(_ error: LanguageModelSession.GenerationError) async -> BridgeSummaryError {
+        switch error {
+        case let .exceededContextWindowSize(context):
+            return .ExceededContextWindow(message: RustString(context.debugDescription))
+        case let .guardrailViolation(context):
+            return .GuardrailViolation(message: RustString(context.debugDescription))
+        case let .unsupportedLanguageOrLocale(context):
+            return .UnsupportedLocale(message: RustString(context.debugDescription))
+        case let .decodingFailure(context):
+            return .DecodingFailure(message: RustString(context.debugDescription))
+        case let .rateLimited(context):
+            return .RateLimited(message: RustString(context.debugDescription))
+        case let .concurrentRequests(context):
+            return .ConcurrentRequests(message: RustString(context.debugDescription))
+        case let .refusal(refusal, context):
+            return .Refusal(
+                message: RustString(
+                    "\(context.debugDescription)\n\(await refusalExplanation(refusal))"
+                )
+            )
+        case .assetsUnavailable:
+            return .ModelNotReady
+        default:
+            return .Internal(message: RustString(error.localizedDescription))
         }
     }
 
-    private func mapGenerationError(_ error: LanguageModelSession.GenerationError) -> Error {
-        switch error {
-        case let .exceededContextWindowSize(context):
-            return SummaryHelperError.exceededContextWindow(context.debugDescription)
-        case let .unsupportedLanguageOrLocale(context):
-            return SummaryHelperError.unsupportedLocale(context.debugDescription)
-        default:
-            return SummaryHelperError.modelFailure(error.localizedDescription)
+    private func refusalExplanation(_ refusal: LanguageModelSession.GenerationError.Refusal) async -> String {
+        do {
+            return try await refusal.explanation.content
+        } catch {
+            return "The model refused to produce a response"
         }
+    }
+}
+
+final class SummaryResultBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var result: Result<SummaryDocumentPayload, BridgeSummaryError>?
+
+    func set(_ result: Result<SummaryDocumentPayload, BridgeSummaryError>) {
+        lock.lock()
+        self.result = result
+        lock.unlock()
+    }
+
+    func get() -> Result<SummaryDocumentPayload, BridgeSummaryError>? {
+        lock.lock()
+        defer { lock.unlock() }
+        return result
     }
 }
