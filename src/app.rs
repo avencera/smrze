@@ -10,7 +10,7 @@ use crate::audio::{audio_fingerprint, decode_audio, normalize_audio};
 use crate::cli::Args;
 use crate::input::resolve_input;
 use crate::models::{build_diarization_pipeline, build_transcription_pipeline, ensure_models};
-use crate::output::{commit_transcript, remove_path_if_exists, stage_transcript};
+use crate::output::{commit_transcript, open_path, remove_path_if_exists, stage_transcript};
 use crate::paths::{AppPaths, RunPaths};
 use crate::speakers::build_turns;
 use crate::transcript::render_transcript;
@@ -73,7 +73,7 @@ fn run_inner(
         .join()
         .map_err(|_| eyre!("model prefetch thread panicked"))??;
 
-    let result = execute_pipeline(&run_paths, &normalized_audio, prefetched_models);
+    let result = execute_pipeline(&run_paths, &normalized_audio, prefetched_models, args.open);
     if result.is_err() {
         cleanup_failed_output(&run_paths)?;
     }
@@ -84,6 +84,7 @@ fn execute_pipeline(
     run_paths: &RunPaths,
     normalized_audio: &[f32],
     models: crate::models::PrefetchedModels,
+    open_transcript: bool,
 ) -> Result<()> {
     let diarization_build_started = Instant::now();
     let mut diarization_pipeline = build_diarization_pipeline(models.diarization)?;
@@ -136,6 +137,9 @@ fn execute_pipeline(
     let transcript = render_transcript(&turns);
     let staged_path = stage_transcript(&run_paths.scratch_dir, &transcript)?;
     commit_transcript(&staged_path, &run_paths.final_path)?;
+    if open_transcript {
+        open_path(&run_paths.final_path)?;
+    }
 
     println!("{}", run_paths.final_path.display());
     Ok(())

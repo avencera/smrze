@@ -20,4 +20,7 @@ pub struct Args {
     /// Directory where transcript.txt should be written
     #[arg(long)]
     pub output_dir: Option<PathBuf>,
+    /// Open transcript.txt after it is written
+    #[arg(short, long)]
+    pub open: bool,
 }

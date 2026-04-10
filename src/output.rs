@@ -4,6 +4,7 @@ use color_eyre::{
 };
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 pub fn stage_transcript(scratch_dir: &Path, transcript: &str) -> Result<PathBuf> {
     let staging_dir = scratch_dir.join("final");
@@ -26,6 +27,20 @@ pub fn commit_transcript(staged_path: &Path, final_path: &Path) -> Result<()> {
     Ok(())
 }
 
+pub fn open_path(path: &Path) -> Result<()> {
+    let status = opener_command(path)
+        .status()
+        .with_context(|| format!("failed to launch opener for {}", path.display()))?;
+    if status.success() {
+        return Ok(());
+    }
+
+    Err(eyre!(
+        "opener exited with status {status} for {}",
+        path.display()
+    ))
+}
+
 pub fn remove_path_if_exists(path: &Path) -> Result<()> {
     if !path.exists() {
         return Ok(());
@@ -37,4 +52,25 @@ pub fn remove_path_if_exists(path: &Path) -> Result<()> {
         fs::remove_file(path).with_context(|| format!("failed to remove {}", path.display()))?;
     }
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn opener_command(path: &Path) -> Command {
+    let mut command = Command::new("open");
+    command.arg(path);
+    command
+}
+
+#[cfg(target_os = "linux")]
+fn opener_command(path: &Path) -> Command {
+    let mut command = Command::new("xdg-open");
+    command.arg(path);
+    command
+}
+
+#[cfg(target_os = "windows")]
+fn opener_command(path: &Path) -> Command {
+    let mut command = Command::new("cmd");
+    command.args(["/C", "start", ""]).arg(path);
+    command
 }
