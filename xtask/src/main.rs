@@ -3,7 +3,7 @@ use std::{env, fs, path::PathBuf, process::Command};
 use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::{
     Result,
-    eyre::{Context, bail, eyre},
+    eyre::{Context, bail},
 };
 
 #[derive(Parser)]
@@ -56,8 +56,6 @@ fn release_local() -> Result<()> {
         bail!("cargo build --release --package smrze failed");
     }
 
-    let helper_src = build_summary_helper(&workspace_root)?;
-
     let home = env::var("HOME").with_context(|| "HOME is not set")?;
     let bin_dir = PathBuf::from(home).join(".local").join("bin");
     fs::create_dir_all(&bin_dir)
@@ -65,7 +63,6 @@ fn release_local() -> Result<()> {
 
     let src = workspace_root.join("target/release/smrze");
     let dest = bin_dir.join("smrze");
-    let helper_dest = bin_dir.join("smrze-foundation-models");
 
     let _ = fs::remove_file(&dest);
     fs::copy(&src, &dest).with_context(|| {
@@ -75,64 +72,9 @@ fn release_local() -> Result<()> {
             dest.display()
         )
     })?;
-    let _ = fs::remove_file(&helper_dest);
-    fs::copy(&helper_src, &helper_dest).with_context(|| {
-        format!(
-            "failed to copy summary helper from {} to {}",
-            helper_src.display(),
-            helper_dest.display()
-        )
-    })?;
 
     println!("Installed smrze to {}", dest.display());
-    println!("Installed summary helper to {}", helper_dest.display());
     Ok(())
-}
-
-fn build_summary_helper(workspace_root: &PathBuf) -> Result<PathBuf> {
-    let package_path = workspace_root.join("apple-foundation-models");
-    let package_path_str = package_path
-        .to_str()
-        .ok_or_else(|| eyre!("invalid package path: {}", package_path.display()))?;
-    let status = Command::new("xcrun")
-        .args([
-            "swift",
-            "build",
-            "-c",
-            "release",
-            "--package-path",
-            package_path_str,
-            "--product",
-            "smrze-foundation-models",
-        ])
-        .status()
-        .with_context(|| "failed to run xcrun swift build for summary helper")?;
-    if !status.success() {
-        bail!("xcrun swift build for summary helper failed");
-    }
-
-    let output = Command::new("xcrun")
-        .args([
-            "swift",
-            "build",
-            "-c",
-            "release",
-            "--package-path",
-            package_path_str,
-            "--show-bin-path",
-        ])
-        .output()
-        .with_context(|| "failed to resolve summary helper bin path")?;
-    if !output.status.success() {
-        bail!("xcrun swift build --show-bin-path failed");
-    }
-
-    let bin_path = PathBuf::from(
-        String::from_utf8(output.stdout)
-            .with_context(|| "summary helper bin path was not utf-8")?
-            .trim(),
-    );
-    Ok(bin_path.join("smrze-foundation-models"))
 }
 
 fn workspace_root() -> Result<PathBuf> {
