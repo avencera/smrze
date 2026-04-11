@@ -13,7 +13,7 @@ use crate::cache::{
 };
 use crate::cli::SummarizeArgs;
 use crate::console;
-use crate::input::{is_url, local_file_source_key, resolve_media_input};
+use crate::input::{ResolvedMediaInput, is_url, local_file_source_key, resolve_media_input};
 use crate::output::{commit_summary, open_path, stage_summary};
 use crate::paths::{AppPaths, RunPaths};
 use crate::speakers::SpeakerTurn;
@@ -27,24 +27,16 @@ pub(super) fn run_summarize(
     args: &SummarizeArgs,
     run_paths: Option<&RunPaths>,
 ) -> Result<()> {
-    let pipeline = SummaryPipeline::new(app_paths, force);
+    let transcription = TranscriptionPipeline::new(app_paths, force);
+    let input_resolver = SummaryInputResolver::new(&transcription);
+    let summary_generator = SummaryGenerator::new(app_paths, force);
     let summary_mode = selected_summary_mode(args);
     let summary_model_dir = resolve_summary_model_dir(args.summary_model_dir.as_deref())?;
-    let summary_input = pipeline.resolve_summary_input(&args.input)?;
+    let summary_input = input_resolver.resolve(&args.input)?;
     let generated_summary =
-        pipeline.summarize(&summary_input, summary_mode, summary_model_dir.as_deref())?;
+        summary_generator.summarize(&summary_input, summary_mode, summary_model_dir.as_deref())?;
 
-    if let Some(run_paths) = run_paths {
-        let staged_path = stage_summary(&run_paths.scratch_dir, &generated_summary.markdown)?;
-        commit_summary(&staged_path, &run_paths.summary_path)?;
-        println!("{}", run_paths.summary_path.display());
-        if args.open {
-            open_path(&run_paths.summary_path)?;
-        }
-    } else {
-        println!("{}", generated_summary.markdown);
-    }
-    Ok(())
+    write_summary_output(run_paths, args.open, &generated_summary.markdown)
 }
 
 #[derive(Debug, Clone)]
@@ -55,25 +47,19 @@ struct SummaryInput {
     turns: Vec<SpeakerTurn>,
 }
 
-struct SummaryPipeline<'a> {
-    app_paths: &'a AppPaths,
-    force: bool,
-    transcription: TranscriptionPipeline<'a>,
+struct SummaryInputResolver<'a> {
+    transcription: &'a TranscriptionPipeline<'a>,
 }
 
-impl<'a> SummaryPipeline<'a> {
-    fn new(app_paths: &'a AppPaths, force: bool) -> Self {
-        Self {
-            app_paths,
-            force,
-            transcription: TranscriptionPipeline::new(app_paths, force),
-        }
+impl<'a> SummaryInputResolver<'a> {
+    fn new(transcription: &'a TranscriptionPipeline<'a>) -> Self {
+        Self { transcription }
     }
 
-    fn resolve_summary_input(&self, input: &str) -> Result<SummaryInput> {
+    fn resolve(&self, input: &str) -> Result<SummaryInput> {
         if is_url(input) {
             let resolved_input = resolve_media_input(input)?;
-            return self.transcript_summary_input(&resolved_input);
+            return self.summary_input_from_media(&resolved_input);
         }
 
         let path = expand_path(Path::new(input))?
@@ -83,17 +69,17 @@ impl<'a> SummaryPipeline<'a> {
             return Err(eyre!("input file not found: {}", path.display()));
         }
 
-        if let Some(summary_input) = try_load_transcript_file(&path)? {
+        if let Some(summary_input) = self.try_load_transcript_file(&path)? {
             return Ok(summary_input);
         }
 
         let resolved_input = resolve_media_input(input)?;
-        self.transcript_summary_input(&resolved_input)
+        self.summary_input_from_media(&resolved_input)
     }
 
-    fn transcript_summary_input(
+    fn summary_input_from_media(
         &self,
-        resolved_input: &crate::input::ResolvedMediaInput,
+        resolved_input: &ResolvedMediaInput,
     ) -> Result<SummaryInput> {
         let transcript = self
             .transcription
@@ -104,6 +90,37 @@ impl<'a> SummaryPipeline<'a> {
             transcript_hash: transcript.transcript_hash,
             turns: transcript.turns,
         })
+    }
+
+    fn try_load_transcript_file(&self, path: &Path) -> Result<Option<SummaryInput>> {
+        let transcript_text = match fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::InvalidData => return Ok(None),
+            Err(error) => {
+                return Err(error).with_context(|| format!("failed to read {}", path.display()));
+            }
+        };
+        let Some(turns) = parse_transcript(&transcript_text) else {
+            return Ok(None);
+        };
+
+        Ok(Some(SummaryInput {
+            display_name: sanitize_name(&file_stem_name(path)?),
+            source_key: local_file_source_key(path)?,
+            transcript_hash: hash_string(&transcript_text),
+            turns,
+        }))
+    }
+}
+
+struct SummaryGenerator<'a> {
+    app_paths: &'a AppPaths,
+    force: bool,
+}
+
+impl<'a> SummaryGenerator<'a> {
+    fn new(app_paths: &'a AppPaths, force: bool) -> Self {
+        Self { app_paths, force }
     }
 
     fn summarize(
@@ -161,24 +178,18 @@ impl<'a> SummaryPipeline<'a> {
     }
 }
 
-fn try_load_transcript_file(path: &Path) -> Result<Option<SummaryInput>> {
-    let transcript_text = match fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::InvalidData => return Ok(None),
-        Err(error) => {
-            return Err(error).with_context(|| format!("failed to read {}", path.display()));
+fn write_summary_output(run_paths: Option<&RunPaths>, open: bool, markdown: &str) -> Result<()> {
+    if let Some(run_paths) = run_paths {
+        let staged_path = stage_summary(&run_paths.scratch_dir, markdown)?;
+        commit_summary(&staged_path, &run_paths.summary_path)?;
+        println!("{}", run_paths.summary_path.display());
+        if open {
+            open_path(&run_paths.summary_path)?;
         }
-    };
-    let Some(turns) = parse_transcript(&transcript_text) else {
-        return Ok(None);
-    };
-
-    Ok(Some(SummaryInput {
-        display_name: sanitize_name(&file_stem_name(path)?),
-        source_key: local_file_source_key(path)?,
-        transcript_hash: hash_string(&transcript_text),
-        turns,
-    }))
+    } else {
+        println!("{markdown}");
+    }
+    Ok(())
 }
 
 fn selected_summary_mode(args: &SummarizeArgs) -> SummaryMode {
@@ -201,7 +212,8 @@ fn summary_mode_label(summary_mode: SummaryMode) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{SummaryPipeline, selected_summary_mode};
+    use super::super::transcription::TranscriptionPipeline;
+    use super::{SummaryInputResolver, selected_summary_mode};
     use crate::paths::AppPaths;
     use crate::summary::SummaryMode;
     use clap::Parser;
@@ -253,9 +265,9 @@ mod tests {
         )?;
 
         let app_paths = test_paths("smrze-summary-structured-transcript-cache");
-        let pipeline = SummaryPipeline::new(&app_paths, false);
-        let summary_input =
-            pipeline.resolve_summary_input(transcript_path.to_str().expect("valid path"))?;
+        let transcription = TranscriptionPipeline::new(&app_paths, false);
+        let resolver = SummaryInputResolver::new(&transcription);
+        let summary_input = resolver.resolve(transcript_path.to_str().expect("valid path"))?;
 
         assert_eq!(summary_input.display_name, "meeting");
         assert_eq!(summary_input.turns.len(), 1);
@@ -275,9 +287,9 @@ mod tests {
         fs::write(&transcript_path, "first line\n\nsecond line")?;
 
         let app_paths = test_paths("smrze-summary-plain-transcript-cache");
-        let pipeline = SummaryPipeline::new(&app_paths, false);
-        let summary_input =
-            pipeline.resolve_summary_input(transcript_path.to_str().expect("valid path"))?;
+        let transcription = TranscriptionPipeline::new(&app_paths, false);
+        let resolver = SummaryInputResolver::new(&transcription);
+        let summary_input = resolver.resolve(transcript_path.to_str().expect("valid path"))?;
 
         assert_eq!(summary_input.display_name, "notes");
         assert_eq!(summary_input.turns.len(), 2);
