@@ -1,4 +1,5 @@
 use scriptrs::TimedToken;
+use serde::{Deserialize, Serialize};
 use speakrs::{
     DiarizationResult,
     pipeline::{FRAME_DURATION_SECONDS, FRAME_STEP_SECONDS},
@@ -13,7 +14,7 @@ const MINORITY_SPEAKER_RATIO: f64 = 0.12;
 const PREFERRED_SPLIT_SECONDS: f64 = 12.0;
 const HARD_SPLIT_SECONDS: f64 = 30.0;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SpeakerTurn {
     pub start: f64,
     pub end: f64,

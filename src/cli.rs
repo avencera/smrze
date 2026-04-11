@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Parser, builder::Styles};
+use clap::{Args, Parser, Subcommand, builder::Styles};
 
 use crate::summary_backend::SummaryBackend;
 
@@ -42,38 +42,88 @@ pub fn get_styles() -> Styles {
         )
 }
 
-/// Command line arguments for the smrze CLI
 #[derive(Debug, Parser)]
 #[command(
     name = "smrze",
     author,
     version,
     long_version = env!("CARGO_PKG_VERSION"),
+    about = "Create local-only transcripts and summaries from media or transcript files",
     arg_required_else_help = true,
-    about = "Create a local-only diarized transcript from a media file or URL",
-    long_about = "smrze creates a local-only diarized transcript from a YouTube video, direct media URL, or local audio/video file, and can optionally add a local summary on macOS using either Apple Foundation models or Gemma 4 models running through Swift MLX. By default it prints results to stdout.",
-    after_help = "Examples:\n  smrze https://www.youtube.com/watch?v=jNQXAC9IVRw\n  smrze ./meeting.m4a --summary\n  smrze ./meeting.m4a -b gemma4-e4b -m ~/models/gemma4\n  smrze ./call.mp4 -o ~/transcripts/call",
     styles = get_styles()
 )]
-pub struct Args {
+pub struct Cli {
+    /// Suppress non-error logs and downloader progress output
+    #[arg(short, long, global = true)]
+    pub quiet: bool,
+    /// Recompute artifacts instead of reading from the artifact cache
+    #[arg(long, global = true)]
+    pub force: bool,
+    #[command(subcommand)]
+    pub command: Command,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum Command {
+    /// Generate a diarized transcript from a media file or URL
+    #[command(alias = "t")]
+    Transcript(TranscriptArgs),
+    /// Generate a summary from a transcript file, media file, or URL
+    #[command(alias = "s")]
+    Summarize(SummarizeArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct TranscriptArgs {
     /// Local media file or remote URL
     pub input: String,
-    /// Directory where transcript.txt and summary.md should be written instead of stdout
+    /// Directory where transcript.txt should be written instead of stdout
     #[arg(short, long, value_name = "DIR")]
     pub output: Option<PathBuf>,
-    /// Generate summary.md using the default local summary backend
-    #[arg(short = 's', long)]
-    pub summary: bool,
-    /// Summary backend to use, implies --summary
+    /// Open the written transcript after it is created, requires --output
+    #[arg(long)]
+    pub open: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct SummarizeArgs {
+    /// Local transcript or media file, or a remote media URL
+    pub input: String,
+    /// Directory where summary.md should be written instead of stdout
+    #[arg(short, long, value_name = "DIR")]
+    pub output: Option<PathBuf>,
+    /// Summary backend to use, defaults to Apple Foundation with Gemma fallback on refusal
     #[arg(short = 'b', long, value_enum)]
     pub summary_backend: Option<SummaryBackend>,
     /// Directory containing local Gemma 4 MLX model directories when using a Gemma backend
     #[arg(short = 'm', long, value_name = "DIR")]
     pub summary_model_dir: Option<PathBuf>,
-    /// Suppress non-error logs and downloader progress output
-    #[arg(short, long)]
-    pub quiet: bool,
-    /// Open the written output after it is created, requires --output
+    /// Open the written summary after it is created, requires --output
     #[arg(long)]
     pub open: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Command};
+    use clap::Parser;
+
+    #[test]
+    fn transcript_alias_parses() {
+        let cli = Cli::parse_from(["smrze", "t", "input.wav"]);
+        assert!(matches!(cli.command, Command::Transcript(_)));
+    }
+
+    #[test]
+    fn summarize_alias_parses() {
+        let cli = Cli::parse_from(["smrze", "s", "transcript.txt"]);
+        assert!(matches!(cli.command, Command::Summarize(_)));
+    }
+
+    #[test]
+    fn global_flags_parse_before_subcommand() {
+        let cli = Cli::parse_from(["smrze", "--quiet", "--force", "transcript", "input.wav"]);
+        assert!(cli.quiet);
+        assert!(cli.force);
+    }
 }

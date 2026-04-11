@@ -17,6 +17,14 @@ impl SummaryBackend {
         }
     }
 
+    pub const fn cache_key(self) -> &'static str {
+        match self {
+            Self::AppleFoundation => "apple-foundation",
+            Self::Gemma4E2b => "gemma4-e2b",
+            Self::Gemma4E4b => "gemma4-e4b",
+        }
+    }
+
     pub const fn gemma_variant(self) -> Option<GemmaVariant> {
         match self {
             Self::AppleFoundation => None,

@@ -27,6 +27,7 @@ symphonia = { version = "0.5", features = ["all"] }
 swift-bridge = "0.1.59"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"] }
+url = "2.5"
 
 [dev-dependencies]
 ndarray = "0.17.2"

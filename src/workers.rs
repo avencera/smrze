@@ -59,10 +59,6 @@ impl DiarizationWorker {
     pub(crate) fn run(self, audio: Arc<[f32]>) -> Result<DiarizationResult> {
         self.0.run(audio)
     }
-
-    pub(crate) fn cancel(self) -> Result<()> {
-        self.0.cancel()
-    }
 }
 
 pub(crate) struct TranscriptionWorker(Worker<TranscriptionResult>);

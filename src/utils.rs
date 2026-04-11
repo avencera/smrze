@@ -55,9 +55,9 @@ pub fn ensure_parent_dir(path: &Path) -> Result<()> {
 }
 
 pub fn short_hash(input: &str) -> String {
-    blake3::hash(input.as_bytes())
-        .to_hex()
-        .chars()
-        .take(8)
-        .collect()
+    hash_string(input).chars().take(8).collect()
+}
+
+pub fn hash_string(input: &str) -> String {
+    blake3::hash(input.as_bytes()).to_hex().to_string()
 }

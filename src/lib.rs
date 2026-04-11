@@ -1,5 +1,6 @@
 mod app;
 mod audio;
+mod cache;
 mod cli;
 mod console;
 mod foundation_models;
@@ -19,4 +20,4 @@ mod utils;
 mod workers;
 
 pub use app::run;
-pub use cli::Args;
+pub use cli::Cli;

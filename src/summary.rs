@@ -1,33 +1,87 @@
 use color_eyre::{Result, eyre::eyre};
 use std::path::Path;
 
-use crate::foundation_models::{SummaryRequest, SummaryTurn, summarize_transcript};
+use crate::console;
+use crate::foundation_models::{SummaryError, SummaryRequest, SummaryTurn, summarize_transcript};
 use crate::gemma_models::generate_gemma_text;
 use crate::paths::AppPaths;
 use crate::speakers::SpeakerTurn;
 use crate::summary_backend::{GemmaVariant, SummaryBackend};
 use crate::utils::expand_path;
 
-pub fn generate_summary(
-    title: &str,
-    turns: &[SpeakerTurn],
-    backend: SummaryBackend,
-    summary_model_dir: Option<&Path>,
-    app_paths: &AppPaths,
-) -> Result<String> {
-    if filtered_turns(turns).is_empty() {
-        return Err(eyre!("cannot summarize an empty transcript"));
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SummaryMode {
+    Auto,
+    Backend(SummaryBackend),
+}
 
-    match backend {
-        SummaryBackend::AppleFoundation => generate_apple_summary(title, turns),
-        SummaryBackend::Gemma4E2b | SummaryBackend::Gemma4E4b => {
-            generate_gemma_summary(title, turns, backend, summary_model_dir, app_paths)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GeneratedSummary {
+    pub markdown: String,
+    pub backend: SummaryBackend,
+}
+
+impl SummaryMode {
+    pub const fn requested_key(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Backend(backend) => backend.cache_key(),
         }
     }
 }
 
-fn generate_apple_summary(title: &str, turns: &[SpeakerTurn]) -> Result<String> {
+pub fn generate_summary(
+    title: &str,
+    turns: &[SpeakerTurn],
+    mode: SummaryMode,
+    summary_model_dir: Option<&Path>,
+    app_paths: &AppPaths,
+) -> Result<GeneratedSummary> {
+    if filtered_turns(turns).is_empty() {
+        return Err(eyre!("cannot summarize an empty transcript"));
+    }
+
+    match mode {
+        SummaryMode::Auto => match generate_apple_summary(title, turns) {
+            Ok(markdown) => Ok(GeneratedSummary {
+                markdown,
+                backend: SummaryBackend::AppleFoundation,
+            }),
+            Err(SummaryError::Refusal { .. }) => {
+                console::info(
+                    "Apple Foundation refused this transcript, falling back to Gemma 4 E2B",
+                );
+                let markdown = generate_gemma_summary(
+                    title,
+                    turns,
+                    SummaryBackend::Gemma4E2b,
+                    summary_model_dir,
+                    app_paths,
+                )?;
+                Ok(GeneratedSummary {
+                    markdown,
+                    backend: SummaryBackend::Gemma4E2b,
+                })
+            }
+            Err(error) => Err(eyre!(error.message())),
+        },
+        SummaryMode::Backend(SummaryBackend::AppleFoundation) => {
+            let markdown =
+                generate_apple_summary(title, turns).map_err(|error| eyre!(error.message()))?;
+            Ok(GeneratedSummary {
+                markdown,
+                backend: SummaryBackend::AppleFoundation,
+            })
+        }
+        SummaryMode::Backend(backend @ (SummaryBackend::Gemma4E2b | SummaryBackend::Gemma4E4b)) => {
+            let markdown =
+                generate_gemma_summary(title, turns, backend, summary_model_dir, app_paths)?;
+            Ok(GeneratedSummary { markdown, backend })
+        }
+    }
+}
+
+fn generate_apple_summary(title: &str, turns: &[SpeakerTurn]) -> Result<String, SummaryError> {
     let request = SummaryRequest {
         title: title.to_owned(),
         turns: filtered_turns(turns)
@@ -38,7 +92,7 @@ fn generate_apple_summary(title: &str, turns: &[SpeakerTurn]) -> Result<String> 
             })
             .collect(),
     };
-    summarize_transcript(request).map_err(|error| eyre!(error.message()))
+    summarize_transcript(request)
 }
 
 fn generate_gemma_summary(
@@ -102,7 +156,7 @@ fn render_gemma_summary_prompt(title: &str, turns: &[SpeakerTurn]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::render_gemma_summary_prompt;
+    use super::{SummaryMode, render_gemma_summary_prompt};
     use crate::speakers::SpeakerTurn;
 
     #[test]
@@ -120,5 +174,10 @@ mod tests {
         assert!(prompt.contains("Title: Weekly sync"));
         assert!(prompt.contains("ALICE: Ship it"));
         assert!(prompt.contains("concise markdown"));
+    }
+
+    #[test]
+    fn auto_mode_uses_distinct_cache_key() {
+        assert_eq!(SummaryMode::Auto.requested_key(), "auto");
     }
 }
