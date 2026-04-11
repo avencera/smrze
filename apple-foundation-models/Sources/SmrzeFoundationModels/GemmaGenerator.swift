@@ -63,26 +63,88 @@ private actor GemmaGeneratorStore {
     func generate(_ request: GemmaRequestPayload) async throws -> String {
         let source = try resolveSource(request)
         let container = try await modelContainer(for: source)
-        let promptTokens = await container.encode(request.prompt)
-        let input = LMInput(tokens: MLXArray(promptTokens))
-        let parameters = GenerateParameters(maxTokens: request.maxNewTokens, temperature: 0)
-        let stream = try await container.generate(input: input, parameters: parameters)
+        let parameters = GenerateParameters(
+            maxTokens: request.maxNewTokens,
+            temperature: 0.0,
+            repetitionPenalty: 1.1,
+            repetitionContextSize: 128
+        )
+        do {
+            return try await container.perform { context in
+                let userInput = UserInput(
+                    chat: [
+                        .system(
+                            "You are a concise assistant that writes useful markdown summaries from transcripts. Always return a non-empty summary."
+                        ),
+                        .user(request.prompt),
+                    ],
+                    additionalContext: ["enable_thinking": false]
+                )
+                let input = try await context.processor.prepare(input: userInput)
+                let stream = try MLXLMCommon.generate(
+                    input: input,
+                    parameters: parameters,
+                    context: context
+                )
 
-        var output = ""
-        for await generation in stream {
-            switch generation {
-            case .chunk(let chunk):
-                output += chunk
-            case .info:
-                break
-            case .toolCall:
+                var output = ""
+                for await generation in stream {
+                    switch generation {
+                    case .chunk(let chunk):
+                        output += chunk
+                    case .info:
+                        break
+                    case .toolCall:
+                        throw BridgeGemmaError.GenerateFailure(
+                            message: RustString("Gemma emitted an unexpected tool call")
+                        )
+                    }
+                }
+
+                let normalizedOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !normalizedOutput.isEmpty {
+                    return normalizedOutput
+                }
+
+                let rawInput = try await context.processor.prepare(input: userInput)
+                let rawStream = try generateTokens(
+                    input: rawInput,
+                    parameters: parameters,
+                    context: context,
+                    includeStopToken: true
+                )
+                var tokenIds = [Int]()
+                var completionInfo: GenerateCompletionInfo?
+
+                for await event in rawStream {
+                    switch event {
+                    case .token(let token):
+                        tokenIds.append(token)
+                    case .info(let info):
+                        completionInfo = info
+                    }
+                }
+
+                let rawOutput = context.tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
+                let normalizedRawOutput = normalizeGemmaRawOutput(rawOutput)
+                if !normalizedRawOutput.isEmpty {
+                    return normalizedRawOutput
+                }
+
+                let stopReason = completionInfo.map { String(describing: $0.stopReason) } ?? "unknown"
+                let tokenSummary = tokenIds.map(String.init).joined(separator: ",")
+                let rawSummary = rawOutput.replacingOccurrences(of: "\n", with: "\\n")
                 throw BridgeGemmaError.GenerateFailure(
-                    message: RustString("Gemma emitted an unexpected tool call")
+                    message: RustString(
+                        "Gemma produced an empty response (tokens: \(tokenIds.count), stop: \(stopReason), token_ids: [\(tokenSummary)], raw: \(rawSummary))"
+                    )
                 )
             }
+        } catch let error as BridgeGemmaError {
+            throw error
+        } catch {
+            throw BridgeGemmaError.Internal(message: RustString(error.localizedDescription))
         }
-
-        return output
     }
 
     private func resolveSource(_ request: GemmaRequestPayload) throws(BridgeGemmaError) -> GemmaModelSource {
@@ -178,6 +240,69 @@ private actor GemmaGeneratorStore {
         self.factoryInstance = factory
         return factory
     }
+
+}
+
+private func normalizeGemmaRawOutput(_ rawOutput: String) -> String {
+    var normalizedOutput = rawOutput
+
+    for token in [
+        "<bos>",
+        "<eos>",
+        "<pad>",
+        "<|think|>",
+        "<|turn>",
+        "<turn|>",
+        "<|tool_call>",
+        "<tool_call|>",
+        "<|tool>",
+        "<tool|>",
+        "<|tool_response>",
+        "<tool_response|>",
+        "<|channel>",
+        "<channel|>",
+    ] {
+        normalizedOutput = normalizedOutput.replacingOccurrences(of: token, with: "")
+    }
+
+    normalizedOutput = replacingMatches(
+        in: normalizedOutput,
+        pattern: #"<\|channel\>thought\s*.*?<channel\|>"#
+    )
+    normalizedOutput = replacingMatches(
+        in: normalizedOutput,
+        pattern: #"<\|tool_call\>.*?<tool_call\|>"#
+    )
+    normalizedOutput = replacingMatches(
+        in: normalizedOutput,
+        pattern: #"\n{3,}"#,
+        replacement: "\n\n"
+    )
+
+    return normalizedOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+private func replacingMatches(
+    in value: String,
+    pattern: String,
+    replacement: String = ""
+) -> String {
+    guard
+        let expression = try? NSRegularExpression(
+            pattern: pattern,
+            options: [.dotMatchesLineSeparators]
+        )
+    else {
+        return value
+    }
+
+    let range = NSRange(value.startIndex..., in: value)
+    return expression.stringByReplacingMatches(
+        in: value,
+        options: [],
+        range: range,
+        withTemplate: replacement
+    )
 }
 
 private final class GemmaResultBox: @unchecked Sendable {

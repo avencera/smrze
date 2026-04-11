@@ -17,20 +17,6 @@ pub struct SummaryRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SummaryActionItem {
-    pub owner: Option<String>,
-    pub task: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SummaryDocument {
-    pub overview: String,
-    pub key_points: Vec<String>,
-    pub decisions: Vec<String>,
-    pub action_items: Vec<SummaryActionItem>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SummaryError {
     DeviceNotEligible,
     AppleIntelligenceNotEnabled,
@@ -46,7 +32,7 @@ pub enum SummaryError {
 }
 
 #[cfg(target_os = "macos")]
-pub fn summarize_transcript(request: SummaryRequest) -> Result<SummaryDocument, SummaryError> {
+pub fn summarize_transcript(request: SummaryRequest) -> Result<String, SummaryError> {
     let bridge_request = BridgeSummaryRequest {
         title: request.title,
         turns: request
@@ -56,40 +42,14 @@ pub fn summarize_transcript(request: SummaryRequest) -> Result<SummaryDocument, 
             .collect(),
     };
     let summary = summarize_transcript_bridge(bridge_request)?;
-    Ok(SummaryDocument::from(summary))
+    Ok(render_summary_markdown(summary))
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn summarize_transcript(_request: SummaryRequest) -> Result<SummaryDocument, SummaryError> {
+pub fn summarize_transcript(_request: SummaryRequest) -> Result<String, SummaryError> {
     Err(SummaryError::Internal {
         message: "local summaries require macOS".to_owned(),
     })
-}
-
-impl SummaryDocument {
-    #[cfg(target_os = "macos")]
-    fn from(summary: BridgeSummaryDocument) -> Self {
-        let action_items = summary
-            .action_item_tasks
-            .into_iter()
-            .enumerate()
-            .map(|(index, task)| SummaryActionItem {
-                owner: summary
-                    .action_item_owners
-                    .get(index)
-                    .cloned()
-                    .and_then(optional_not_empty),
-                task,
-            })
-            .collect();
-
-        Self {
-            overview: summary.overview,
-            key_points: summary.key_points,
-            decisions: summary.decisions,
-            action_items,
-        }
-    }
 }
 
 impl SummaryError {
@@ -141,6 +101,64 @@ impl From<BridgeSummaryError> for SummaryError {
             BridgeSummaryError::Internal { message } => Self::Internal { message },
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+fn render_summary_markdown(summary: BridgeSummaryDocument) -> String {
+    let BridgeSummaryDocument {
+        overview,
+        key_points,
+        decisions,
+        action_item_owners,
+        action_item_tasks,
+    } = summary;
+    let mut lines = vec![
+        "# Summary".to_owned(),
+        String::new(),
+        "## Overview".to_owned(),
+        overview.trim().to_owned(),
+        String::new(),
+        "## Key Points".to_owned(),
+    ];
+
+    for key_point in key_points {
+        lines.push(format!("- {}", key_point.trim()));
+    }
+
+    if !decisions.is_empty() {
+        lines.push(String::new());
+        lines.push("## Decisions".to_owned());
+        for decision in decisions {
+            lines.push(format!("- {}", decision.trim()));
+        }
+    }
+
+    let action_items = action_item_tasks
+        .into_iter()
+        .enumerate()
+        .map(|(index, task)| {
+            let owner = action_item_owners
+                .get(index)
+                .cloned()
+                .and_then(optional_not_empty);
+            (owner, task)
+        })
+        .collect::<Vec<_>>();
+
+    if !action_items.is_empty() {
+        lines.push(String::new());
+        lines.push("## Action Items".to_owned());
+        for (owner, task) in action_items {
+            match owner.as_deref().map(str::trim) {
+                Some(owner) if !owner.is_empty() => {
+                    lines.push(format!("- {owner}: {}", task.trim()));
+                }
+                _ => lines.push(format!("- {}", task.trim())),
+            }
+        }
+    }
+
+    lines.join("\n")
 }
 
 fn optional_not_empty(value: String) -> Option<String> {

@@ -17,7 +17,7 @@ use crate::output::{
 };
 use crate::paths::{AppPaths, RunPaths};
 use crate::speakers::build_turns;
-use crate::summary::{generate_summary, render_markdown};
+use crate::summary::generate_summary;
 use crate::summary_backend::SummaryBackend;
 use crate::transcript::render_transcript;
 use crate::utils::now_millis;
@@ -103,6 +103,7 @@ fn run_inner(
     };
     let result = execute_pipeline(
         pipeline,
+        app_paths,
         normalized_audio,
         diarization_worker,
         transcription_worker,
@@ -126,6 +127,7 @@ struct PipelineConfig<'a> {
 
 fn execute_pipeline(
     pipeline: PipelineConfig<'_>,
+    app_paths: &AppPaths,
     normalized_audio: Arc<[f32]>,
     diarization_worker: DiarizationWorker,
     transcription_worker: TranscriptionWorker,
@@ -160,11 +162,12 @@ fn execute_pipeline(
             summary_backend.display_name()
         ));
         let summary_started = Instant::now();
-        let summary = match generate_summary(
+        let summary_markdown = match generate_summary(
             pipeline.title,
             &turns,
             summary_backend,
             pipeline.summary_model_dir,
+            app_paths,
         ) {
             Ok(summary) => summary,
             Err(error) => {
@@ -174,7 +177,6 @@ fn execute_pipeline(
                 return Err(error);
             }
         };
-        let summary_markdown = render_markdown(&summary);
         debug!(
             "Finished summary in {:.2}s",
             summary_started.elapsed().as_secs_f64()

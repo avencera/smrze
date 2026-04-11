@@ -15,3 +15,6 @@ fix:
 
 release place="local":
     cargo xtask release {{place}}
+
+publish-mlx-metallib:
+    cargo xtask publish-mlx-metallib

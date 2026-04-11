@@ -36,6 +36,15 @@ impl AppPaths {
     pub fn speakrs_model_cache(&self) -> PathBuf {
         self.cache_dir.join("models").join("speakrs")
     }
+
+    pub fn huggingface_cache(&self) -> PathBuf {
+        self.cache_dir.join("huggingface")
+    }
+
+    pub fn mlx_runtime_cache(&self) -> PathBuf {
+        self.cache_dir.join("runtime").join("mlx")
+    }
+
     pub fn create_run(&self, output_dir: &Path, run_id: &str) -> Result<RunPaths> {
         let scratch_dir = self.cache_dir.join("runs").join(run_id);
         fs::create_dir_all(&scratch_dir)

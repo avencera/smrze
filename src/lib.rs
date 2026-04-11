@@ -7,6 +7,7 @@ mod foundation_models;
 mod foundation_models_bridge;
 mod gemma_models;
 mod input;
+mod mlx_runtime;
 mod models;
 mod output;
 mod paths;

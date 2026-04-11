@@ -15,9 +15,11 @@ clap = { version = "4.5", features = ["derive"] }
 color-eyre = "0.6"
 colored = "3.0"
 duct = "1.1.1"
+hf-hub = { version = "0.5", default-features = false, features = ["ureq", "native-tls"] }
 hound = "3.5"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+sha2 = "0.10"
 scriptrs = { git = "https://github.com/avencera/scriptrs.git", rev = "0bf7f26e685b3b8a990512d7d34630c0cf67c1dd", features = ["long-form"] }
 shellexpand = "3.1"
 speakrs = { path = "../speakrs", features = ["coreml"] }
@@ -30,4 +32,5 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"]
 ndarray = "0.17.2"
 
 [build-dependencies]
+sha2 = "0.10"
 swift-bridge-build = "0.1.59"

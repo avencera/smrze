@@ -2377,11 +2377,13 @@ dependencies = [
  "color-eyre",
  "colored",
  "duct",
+ "hf-hub",
  "hound",
  "ndarray",
  "scriptrs",
  "serde",
  "serde_json",
+ "sha2",
  "shellexpand",
  "speakrs",
  "swift-bridge",
@@ -3654,6 +3656,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "color-eyre",
+ "sha2",
 ]
 
 [[package]]
