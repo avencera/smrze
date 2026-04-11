@@ -14,6 +14,15 @@ pub fn now_millis() -> Result<u128> {
         .as_millis())
 }
 
+pub fn now_millis_u64() -> Result<u64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| eyre!("system clock before unix epoch: {error}"))?
+        .as_millis()
+        .try_into()
+        .map_err(|_| eyre!("system time does not fit into u64"))
+}
+
 pub fn expand_path(path: &Path) -> Result<PathBuf> {
     let expanded = shellexpand::tilde(&path.to_string_lossy()).into_owned();
     Ok(PathBuf::from(expanded))

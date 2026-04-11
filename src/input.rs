@@ -3,25 +3,18 @@ use color_eyre::{
     eyre::{Context, eyre},
 };
 use duct::cmd;
-use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 use url::Url;
 
 use crate::cache::{
-    CacheKind, cache_file_path, clear_cache_entry, ensure_cache_entry_dir, load_manifest,
-    write_manifest,
+    AudioCacheEntry, CacheKind, CachedAudio, clear_cache_entry, ensure_cache_entry_dir, load_audio,
+    store_audio,
 };
 use crate::console;
 use crate::paths::AppPaths;
 use crate::utils::{expand_path, file_stem_name, sanitize_name};
-
-#[derive(Debug, Clone)]
-pub struct CachedAudio {
-    pub display_name: String,
-    pub audio_path: PathBuf,
-}
 
 #[derive(Debug, Clone)]
 pub struct ResolvedMediaInput {
@@ -34,16 +27,6 @@ pub struct ResolvedMediaInput {
 pub enum MediaInputKind {
     Url { url: String },
     LocalFile { path: PathBuf },
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct AudioManifest {
-    created_at_ms: u64,
-    source_key: String,
-    display_name: String,
-    audio_file_name: String,
-    #[serde(default)]
-    media_file_name: Option<String>,
 }
 
 pub fn resolve_media_input(input: &str) -> Result<ResolvedMediaInput> {
@@ -81,21 +64,8 @@ pub fn materialize_audio(
 ) -> Result<CachedAudio> {
     if force {
         clear_cache_entry(app_paths, CacheKind::Audio, &resolved_input.source_key)?;
-    } else if let Some(manifest) =
-        load_manifest::<AudioManifest>(app_paths, CacheKind::Audio, &resolved_input.source_key)?
-    {
-        let audio_path = cache_file_path(
-            app_paths,
-            CacheKind::Audio,
-            &resolved_input.source_key,
-            &manifest.audio_file_name,
-        );
-        if audio_path.exists() {
-            return Ok(CachedAudio {
-                display_name: manifest.display_name,
-                audio_path,
-            });
-        }
+    } else if let Some(cached_audio) = load_audio(app_paths, &resolved_input.source_key)? {
+        return Ok(cached_audio);
     }
     clear_cache_entry(app_paths, CacheKind::Audio, &resolved_input.source_key)?;
 
@@ -136,14 +106,13 @@ pub fn materialize_audio(
         }
     }
 
-    write_manifest(
-        &entry_dir.join("manifest.json"),
-        &AudioManifest {
-            created_at_ms: now_millis_u64()?,
-            source_key: resolved_input.source_key.clone(),
-            display_name: resolved_input.display_name.clone(),
-            audio_file_name: "audio.wav".to_owned(),
-            media_file_name,
+    store_audio(
+        app_paths,
+        AudioCacheEntry {
+            source_key: &resolved_input.source_key,
+            display_name: &resolved_input.display_name,
+            audio_file_name: "audio.wav",
+            media_file_name: media_file_name.as_deref(),
         },
     )?;
 
@@ -330,15 +299,6 @@ fn convert_to_cached_audio(media_path: &Path, output_path: &Path) -> Result<()> 
         media_path.display(),
         stderr.trim()
     ))
-}
-
-fn now_millis_u64() -> Result<u64> {
-    std::time::SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| eyre!("system clock before unix epoch: {error}"))?
-        .as_millis()
-        .try_into()
-        .map_err(|_| eyre!("system time does not fit into u64"))
 }
 
 #[cfg(test)]

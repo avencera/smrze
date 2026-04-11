@@ -11,6 +11,8 @@ use std::path::Path;
 use std::time::Instant;
 use tracing::debug;
 
+const DIARIZATION_EXECUTION_MODE: ExecutionMode = ExecutionMode::CoreMlFast;
+
 pub fn ensure_transcription_models(scriptrs_cache_dir: &Path) -> Result<TranscriptionModelBundle> {
     let transcription_started = Instant::now();
     let transcription =
@@ -26,7 +28,7 @@ pub fn ensure_diarization_models(speakrs_cache_dir: &Path) -> Result<Diarization
     let diarization_started = Instant::now();
     let diarization_models_dir =
         SpeakerModelManager::with_cache_dir(speakrs_cache_dir.to_path_buf())?
-            .ensure(ExecutionMode::CoreMl)?;
+            .ensure(DIARIZATION_EXECUTION_MODE)?;
     debug!(
         "Ensured diarization models in {:.2}s",
         diarization_started.elapsed().as_secs_f64()
@@ -50,7 +52,7 @@ pub fn build_diarization_pipeline(
     bundle: DiarizationModelBundle,
 ) -> Result<OwnedDiarizationPipeline> {
     let diarization_started = Instant::now();
-    let diarization = OwnedDiarizationPipeline::from_bundle(bundle, ExecutionMode::CoreMl)?;
+    let diarization = OwnedDiarizationPipeline::from_bundle(bundle, DIARIZATION_EXECUTION_MODE)?;
     debug!(
         "Built diarization pipeline in {:.2}s",
         diarization_started.elapsed().as_secs_f64()
