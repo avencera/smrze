@@ -11,6 +11,7 @@ mod output;
 mod paths;
 mod speakers;
 mod summary;
+mod summary_backend;
 mod transcript;
 mod utils;
 mod workers;

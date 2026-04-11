@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use clap::{Parser, builder::Styles};
 
+use crate::summary_backend::SummaryBackend;
+
 pub fn get_styles() -> Styles {
     Styles::styled()
         .usage(
@@ -49,8 +51,8 @@ pub fn get_styles() -> Styles {
     long_version = env!("CARGO_PKG_VERSION"),
     arg_required_else_help = true,
     about = "Create a local-only diarized transcript from a media file or URL",
-    long_about = "smrze creates a local-only diarized transcript from a YouTube video, direct media URL, or local audio/video file, and can optionally add a local Apple foundation model summary on macOS. By default it prints results to stdout.",
-    after_help = "Examples:\n  smrze https://www.youtube.com/watch?v=jNQXAC9IVRw\n  smrze ./meeting.m4a --summary\n  smrze ./call.mp4 -o ~/transcripts/call",
+    long_about = "smrze creates a local-only diarized transcript from a YouTube video, direct media URL, or local audio/video file, and can optionally add a local summary on macOS using either Apple Foundation models or exported Gemma 4 Core ML bundles. By default it prints results to stdout.",
+    after_help = "Examples:\n  smrze https://www.youtube.com/watch?v=jNQXAC9IVRw\n  smrze ./meeting.m4a --summary\n  smrze ./meeting.m4a --summary-backend gemma4-e2b --summary-model-dir ~/code/gemma4-coreml/artifacts/models\n  smrze ./call.mp4 -o ~/transcripts/call",
     styles = get_styles()
 )]
 pub struct Args {
@@ -59,9 +61,15 @@ pub struct Args {
     /// Directory where transcript.txt and summary.md should be written instead of stdout
     #[arg(short, long, value_name = "DIR")]
     pub output: Option<PathBuf>,
-    /// Generate summary.md using the local Apple foundation model
+    /// Generate summary.md using the default local summary backend
     #[arg(long)]
     pub summary: bool,
+    /// Summary backend to use, implies --summary
+    #[arg(long, value_enum)]
+    pub summary_backend: Option<SummaryBackend>,
+    /// Directory containing exported Gemma 4 model bundles when using a Gemma backend
+    #[arg(long, value_name = "DIR")]
+    pub summary_model_dir: Option<PathBuf>,
     /// Suppress non-error logs and downloader progress output
     #[arg(short, long)]
     pub quiet: bool,

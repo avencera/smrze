@@ -18,6 +18,7 @@ use crate::output::{
 use crate::paths::{AppPaths, RunPaths};
 use crate::speakers::build_turns;
 use crate::summary::{generate_summary, render_markdown};
+use crate::summary_backend::SummaryBackend;
 use crate::transcript::render_transcript;
 use crate::utils::now_millis;
 use crate::workers::{DiarizationWorker, TranscriptionWorker};
@@ -93,14 +94,19 @@ fn run_inner(
         None => None,
     };
 
+    let pipeline = PipelineConfig {
+        app_paths,
+        run_paths: run_paths.as_ref(),
+        title: &resolved_input.display_name,
+        summary_backend: selected_summary_backend(args),
+        summary_model_dir: args.summary_model_dir.as_deref(),
+        open_output: args.open,
+    };
     let result = execute_pipeline(
-        run_paths.as_ref(),
-        &resolved_input.display_name,
+        pipeline,
         normalized_audio,
         diarization_worker,
         transcription_worker,
-        args.summary,
-        args.open,
     );
     if result.is_err()
         && let Some(run_paths) = run_paths.as_ref()
@@ -111,14 +117,20 @@ fn run_inner(
     result
 }
 
+struct PipelineConfig<'a> {
+    app_paths: &'a AppPaths,
+    run_paths: Option<&'a RunPaths>,
+    title: &'a str,
+    summary_backend: Option<SummaryBackend>,
+    summary_model_dir: Option<&'a Path>,
+    open_output: bool,
+}
+
 fn execute_pipeline(
-    run_paths: Option<&RunPaths>,
-    title: &str,
+    pipeline: PipelineConfig<'_>,
     normalized_audio: Arc<[f32]>,
     diarization_worker: DiarizationWorker,
     transcription_worker: TranscriptionWorker,
-    generate_summary_file: bool,
-    open_output: bool,
 ) -> Result<()> {
     let diarization = match diarization_worker.run(Arc::clone(&normalized_audio)) {
         Ok(diarization) => diarization,
@@ -144,13 +156,22 @@ fn execute_pipeline(
 
     let turns = build_turns(&transcription.tokens, &diarization);
     let transcript = render_transcript(&turns);
-    let summary_markdown = if generate_summary_file {
-        console::info("Generating summary");
+    let summary_markdown = if let Some(summary_backend) = pipeline.summary_backend {
+        console::info(format!(
+            "Generating summary with {}",
+            summary_backend.display_name()
+        ));
         let summary_started = Instant::now();
-        let summary = match generate_summary(title, &turns) {
+        let summary = match generate_summary(
+            pipeline.title,
+            &turns,
+            summary_backend,
+            pipeline.app_paths,
+            pipeline.summary_model_dir,
+        ) {
             Ok(summary) => summary,
             Err(error) => {
-                if let Some(run_paths) = run_paths {
+                if let Some(run_paths) = pipeline.run_paths {
                     remove_path_if_exists(&run_paths.summary_path)?;
                 }
                 return Err(error);
@@ -166,7 +187,7 @@ fn execute_pipeline(
         None
     };
 
-    if let Some(run_paths) = run_paths {
+    if let Some(run_paths) = pipeline.run_paths {
         let staged_path = stage_transcript(&run_paths.scratch_dir, &transcript)?;
         commit_transcript(&staged_path, &run_paths.final_path)?;
         if let Some(summary_markdown) = summary_markdown.as_deref() {
@@ -178,7 +199,7 @@ fn execute_pipeline(
         if summary_markdown.is_some() {
             println!("{}", run_paths.summary_path.display());
         }
-        if open_output {
+        if pipeline.open_output {
             let path_to_open = if summary_markdown.is_some() {
                 &run_paths.summary_path
             } else {
@@ -229,4 +250,14 @@ fn cancel_workers(
     if let Err(error) = transcription_worker.cancel() {
         warn!("Failed to stop transcription worker: {error:#}");
     }
+}
+
+fn selected_summary_backend(args: &Args) -> Option<SummaryBackend> {
+    if let Some(summary_backend) = args.summary_backend {
+        return Some(summary_backend);
+    }
+    if args.summary {
+        return Some(SummaryBackend::AppleFoundation);
+    }
+    None
 }
