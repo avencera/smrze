@@ -4,58 +4,22 @@ use color_eyre::{
 };
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::Instant;
-use tracing::{debug, warn};
+use tracing::debug;
 
-use crate::audio::{decode_audio, normalize_audio};
+use super::transcription::TranscriptionPipeline;
 use crate::cache::{
-    CacheKind, CachedTranscript, SummaryCacheEntry, TranscriptCacheEntry, clear_cache_entry,
-    load_summary, load_transcript, store_summary, store_transcript, summary_cache_key,
+    CacheKind, SummaryCacheEntry, clear_cache_entry, load_summary, store_summary, summary_cache_key,
 };
-use crate::cli::{SummarizeArgs, TranscriptArgs};
+use crate::cli::SummarizeArgs;
 use crate::console;
-use crate::input::{is_url, local_file_source_key, materialize_audio, resolve_media_input};
-use crate::output::{
-    commit_summary, commit_transcript, open_path, stage_summary, stage_transcript,
-};
+use crate::input::{is_url, local_file_source_key, resolve_media_input};
+use crate::output::{commit_summary, open_path, stage_summary};
 use crate::paths::{AppPaths, RunPaths};
-use crate::speakers::{SpeakerTurn, build_turns};
+use crate::speakers::SpeakerTurn;
 use crate::summary::{GeneratedSummary, SummaryMode, generate_summary};
-use crate::transcript::{parse_transcript, render_transcript};
+use crate::transcript::parse_transcript;
 use crate::utils::{expand_path, file_stem_name, hash_string, sanitize_name};
-use crate::workers::{DiarizationWorker, TranscriptionWorker};
-
-#[derive(Debug, Clone)]
-struct SummaryInput {
-    display_name: String,
-    source_key: String,
-    transcript_hash: String,
-    turns: Vec<SpeakerTurn>,
-}
-
-pub(super) fn run_transcript(
-    app_paths: &AppPaths,
-    force: bool,
-    args: &TranscriptArgs,
-    run_paths: Option<&RunPaths>,
-) -> Result<()> {
-    let resolved_input = resolve_media_input(&args.input)?;
-    let pipeline = Pipeline { app_paths, force };
-    let transcript = pipeline.transcribe_media_input(&resolved_input)?;
-
-    if let Some(run_paths) = run_paths {
-        let staged_path = stage_transcript(&run_paths.scratch_dir, &transcript.transcript)?;
-        commit_transcript(&staged_path, &run_paths.final_path)?;
-        println!("{}", run_paths.final_path.display());
-        if args.open {
-            open_path(&run_paths.final_path)?;
-        }
-    } else {
-        println!("{}", transcript.transcript);
-    }
-    Ok(())
-}
 
 pub(super) fn run_summarize(
     app_paths: &AppPaths,
@@ -63,7 +27,7 @@ pub(super) fn run_summarize(
     args: &SummarizeArgs,
     run_paths: Option<&RunPaths>,
 ) -> Result<()> {
-    let pipeline = Pipeline { app_paths, force };
+    let pipeline = SummaryPipeline::new(app_paths, force);
     let summary_mode = selected_summary_mode(args);
     let summary_model_dir = resolve_summary_model_dir(args.summary_model_dir.as_deref())?;
     let summary_input = pipeline.resolve_summary_input(&args.input)?;
@@ -83,12 +47,29 @@ pub(super) fn run_summarize(
     Ok(())
 }
 
-struct Pipeline<'a> {
-    app_paths: &'a AppPaths,
-    force: bool,
+#[derive(Debug, Clone)]
+struct SummaryInput {
+    display_name: String,
+    source_key: String,
+    transcript_hash: String,
+    turns: Vec<SpeakerTurn>,
 }
 
-impl<'a> Pipeline<'a> {
+struct SummaryPipeline<'a> {
+    app_paths: &'a AppPaths,
+    force: bool,
+    transcription: TranscriptionPipeline<'a>,
+}
+
+impl<'a> SummaryPipeline<'a> {
+    fn new(app_paths: &'a AppPaths, force: bool) -> Self {
+        Self {
+            app_paths,
+            force,
+            transcription: TranscriptionPipeline::new(app_paths, force),
+        }
+    }
+
     fn resolve_summary_input(&self, input: &str) -> Result<SummaryInput> {
         if is_url(input) {
             let resolved_input = resolve_media_input(input)?;
@@ -114,55 +95,14 @@ impl<'a> Pipeline<'a> {
         &self,
         resolved_input: &crate::input::ResolvedMediaInput,
     ) -> Result<SummaryInput> {
-        let transcript = self.transcribe_media_input(resolved_input)?;
+        let transcript = self
+            .transcription
+            .transcribe_resolved_input(resolved_input)?;
         Ok(SummaryInput {
             display_name: transcript.display_name,
             source_key: transcript.source_key,
             transcript_hash: transcript.transcript_hash,
             turns: transcript.turns,
-        })
-    }
-
-    fn transcribe_media_input(
-        &self,
-        resolved_input: &crate::input::ResolvedMediaInput,
-    ) -> Result<CachedTranscript> {
-        if self.force {
-            clear_cache_entry(
-                self.app_paths,
-                CacheKind::Transcript,
-                &resolved_input.source_key,
-            )?;
-        } else if let Some(cached_transcript) =
-            load_transcript(self.app_paths, &resolved_input.source_key)?
-        {
-            return Ok(cached_transcript);
-        }
-        clear_cache_entry(
-            self.app_paths,
-            CacheKind::Transcript,
-            &resolved_input.source_key,
-        )?;
-
-        let cached_audio = materialize_audio(self.app_paths, resolved_input, self.force)?;
-        let normalized_audio = load_normalized_audio(&cached_audio.audio_path)?;
-        let (transcript, turns) = build_transcript_from_audio(self.app_paths, normalized_audio)?;
-        store_transcript(
-            self.app_paths,
-            TranscriptCacheEntry {
-                source_key: &resolved_input.source_key,
-                display_name: &resolved_input.display_name,
-                transcript: &transcript,
-                turns: &turns,
-            },
-        )?;
-
-        Ok(CachedTranscript {
-            display_name: cached_audio.display_name,
-            source_key: resolved_input.source_key.clone(),
-            transcript_hash: hash_string(&transcript),
-            transcript,
-            turns,
         })
     }
 
@@ -241,66 +181,6 @@ fn try_load_transcript_file(path: &Path) -> Result<Option<SummaryInput>> {
     }))
 }
 
-fn build_transcript_from_audio(
-    app_paths: &AppPaths,
-    normalized_audio: Arc<[f32]>,
-) -> Result<(String, Vec<SpeakerTurn>)> {
-    let scriptrs_cache_dir = app_paths.scriptrs_model_cache();
-    let speakrs_cache_dir = app_paths.speakrs_model_cache();
-    let diarization_worker = DiarizationWorker::spawn(speakrs_cache_dir);
-    let transcription_worker = TranscriptionWorker::spawn(scriptrs_cache_dir);
-    execute_transcription_pipeline(normalized_audio, diarization_worker, transcription_worker)
-}
-
-fn execute_transcription_pipeline(
-    normalized_audio: Arc<[f32]>,
-    diarization_worker: DiarizationWorker,
-    transcription_worker: TranscriptionWorker,
-) -> Result<(String, Vec<SpeakerTurn>)> {
-    let diarization = match diarization_worker.run(Arc::clone(&normalized_audio)) {
-        Ok(diarization) => diarization,
-        Err(error) => {
-            if let Err(cancel_error) = transcription_worker.cancel() {
-                warn!(
-                    "Failed to stop transcription worker after diarization error: {cancel_error:#}"
-                );
-            }
-            return Err(error);
-        }
-    };
-    debug!(
-        "diarization produced {} segments",
-        diarization.segments.len()
-    );
-
-    let transcription = transcription_worker.run(normalized_audio)?;
-    debug!(
-        "transcription produced {} timed tokens",
-        transcription.tokens.len()
-    );
-
-    let turns = build_turns(&transcription.tokens, &diarization);
-    let transcript = render_transcript(&turns);
-    Ok((transcript, turns))
-}
-
-fn load_normalized_audio(audio_path: &Path) -> Result<Arc<[f32]>> {
-    let decode_started = Instant::now();
-    console::info("Decoding audio");
-    let decoded_audio = decode_audio(audio_path)?;
-    let normalized_audio = normalize_audio(&decoded_audio);
-    if normalized_audio.is_empty() {
-        return Err(eyre!("decoded audio was empty"));
-    }
-
-    debug!(
-        "Decoded and normalized audio in {:.2}s",
-        decode_started.elapsed().as_secs_f64()
-    );
-    debug!("normalized {} samples", normalized_audio.len());
-    Ok(Arc::<[f32]>::from(normalized_audio))
-}
-
 fn selected_summary_mode(args: &SummarizeArgs) -> SummaryMode {
     match args.summary_backend {
         Some(backend) => SummaryMode::Backend(backend),
@@ -321,9 +201,18 @@ fn summary_mode_label(summary_mode: SummaryMode) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::selected_summary_mode;
+    use super::{SummaryPipeline, selected_summary_mode};
+    use crate::paths::AppPaths;
     use crate::summary::SummaryMode;
     use clap::Parser;
+    use color_eyre::Result;
+    use std::fs;
+
+    fn test_paths(name: &str) -> AppPaths {
+        AppPaths {
+            cache_dir: std::env::temp_dir().join(name),
+        }
+    }
 
     #[test]
     fn summary_defaults_to_auto_mode() {
@@ -350,5 +239,53 @@ mod tests {
             selected_summary_mode(&args),
             SummaryMode::Backend(crate::summary_backend::SummaryBackend::AppleFoundation)
         );
+    }
+
+    #[test]
+    fn structured_transcript_file_is_loaded_without_media_resolution() -> Result<()> {
+        let root = std::env::temp_dir().join("smrze-summary-structured-transcript");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root)?;
+        let transcript_path = root.join("meeting.txt");
+        fs::write(
+            &transcript_path,
+            "[00:00:01.000-00:00:02.000] Speaker 1: Hello",
+        )?;
+
+        let app_paths = test_paths("smrze-summary-structured-transcript-cache");
+        let pipeline = SummaryPipeline::new(&app_paths, false);
+        let summary_input =
+            pipeline.resolve_summary_input(transcript_path.to_str().expect("valid path"))?;
+
+        assert_eq!(summary_input.display_name, "meeting");
+        assert_eq!(summary_input.turns.len(), 1);
+        assert_eq!(summary_input.turns[0].text, "Hello");
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&app_paths.cache_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn plain_text_transcript_file_is_loaded_without_media_resolution() -> Result<()> {
+        let root = std::env::temp_dir().join("smrze-summary-plain-transcript");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root)?;
+        let transcript_path = root.join("notes.txt");
+        fs::write(&transcript_path, "first line\n\nsecond line")?;
+
+        let app_paths = test_paths("smrze-summary-plain-transcript-cache");
+        let pipeline = SummaryPipeline::new(&app_paths, false);
+        let summary_input =
+            pipeline.resolve_summary_input(transcript_path.to_str().expect("valid path"))?;
+
+        assert_eq!(summary_input.display_name, "notes");
+        assert_eq!(summary_input.turns.len(), 2);
+        assert_eq!(summary_input.turns[0].speaker, "Speaker 1");
+        assert_eq!(summary_input.turns[1].text, "second line");
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&app_paths.cache_dir);
+        Ok(())
     }
 }

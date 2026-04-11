@@ -8,12 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 use url::Url;
 
-use crate::cache::{
-    AudioCacheEntry, CacheKind, CachedAudio, clear_cache_entry, ensure_cache_entry_dir, load_audio,
-    store_audio,
-};
 use crate::console;
-use crate::paths::AppPaths;
 use crate::utils::{expand_path, file_stem_name, sanitize_name};
 
 #[derive(Debug, Clone)]
@@ -54,71 +49,6 @@ pub fn resolve_media_input(input: &str) -> Result<ResolvedMediaInput> {
         display_name: sanitize_name(&file_stem_name(&path)?),
         source_key: local_file_source_key(&path)?,
         kind: MediaInputKind::LocalFile { path },
-    })
-}
-
-pub fn materialize_audio(
-    app_paths: &AppPaths,
-    resolved_input: &ResolvedMediaInput,
-    force: bool,
-) -> Result<CachedAudio> {
-    if force {
-        clear_cache_entry(app_paths, CacheKind::Audio, &resolved_input.source_key)?;
-    } else if let Some(cached_audio) = load_audio(app_paths, &resolved_input.source_key)? {
-        return Ok(cached_audio);
-    }
-    clear_cache_entry(app_paths, CacheKind::Audio, &resolved_input.source_key)?;
-
-    let entry_dir =
-        ensure_cache_entry_dir(app_paths, CacheKind::Audio, &resolved_input.source_key)?;
-    let audio_path = entry_dir.join("audio.wav");
-    let mut media_file_name = None;
-
-    match &resolved_input.kind {
-        MediaInputKind::Url { url } => {
-            ensure_command("yt-dlp")?;
-            ensure_command("ffmpeg")?;
-            let template = entry_dir.join("download.%(ext)s").display().to_string();
-            let mut args = vec!["-f", "bestaudio/best"];
-            if console::is_quiet() {
-                args.extend(["--quiet", "--no-warnings"]);
-            }
-            args.extend(["-o", template.as_str(), url]);
-
-            let download = cmd("yt-dlp", args).stdout_null();
-            let download = if console::is_quiet() {
-                download.stderr_null()
-            } else {
-                download
-            };
-            download.run().with_context(|| "failed to launch yt-dlp")?;
-
-            let media_path = find_downloaded_media(&entry_dir)?;
-            media_file_name = media_path
-                .file_name()
-                .and_then(|value| value.to_str())
-                .map(ToOwned::to_owned);
-            convert_to_cached_audio(&media_path, &audio_path)?;
-        }
-        MediaInputKind::LocalFile { path } => {
-            ensure_command("ffmpeg")?;
-            convert_to_cached_audio(path, &audio_path)?;
-        }
-    }
-
-    store_audio(
-        app_paths,
-        AudioCacheEntry {
-            source_key: &resolved_input.source_key,
-            display_name: &resolved_input.display_name,
-            audio_file_name: "audio.wav",
-            media_file_name: media_file_name.as_deref(),
-        },
-    )?;
-
-    Ok(CachedAudio {
-        display_name: resolved_input.display_name.clone(),
-        audio_path,
     })
 }
 
@@ -168,7 +98,7 @@ fn fetch_title(url: &str) -> Result<String> {
     Ok(title)
 }
 
-fn ensure_command(command: &str) -> Result<()> {
+pub(crate) fn ensure_command(command: &str) -> Result<()> {
     let output = cmd("which", [command])
         .stdout_null()
         .stderr_null()
@@ -239,7 +169,7 @@ fn default_port(scheme: &str) -> Option<u16> {
     }
 }
 
-fn find_downloaded_media(download_dir: &Path) -> Result<PathBuf> {
+pub(crate) fn find_downloaded_media(download_dir: &Path) -> Result<PathBuf> {
     for preferred in [
         "download.m4a",
         "download.mp4",
@@ -264,7 +194,7 @@ fn find_downloaded_media(download_dir: &Path) -> Result<PathBuf> {
         .ok_or_else(|| eyre!("yt-dlp reported success but no downloaded media was found"))
 }
 
-fn convert_to_cached_audio(media_path: &Path, output_path: &Path) -> Result<()> {
+pub(crate) fn convert_to_cached_audio(media_path: &Path, output_path: &Path) -> Result<()> {
     let input = media_path.display().to_string();
     let output = output_path.display().to_string();
     let result = cmd(

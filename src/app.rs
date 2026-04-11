@@ -1,4 +1,5 @@
-mod pipeline;
+mod summary;
+mod transcription;
 
 use color_eyre::{Result, eyre::eyre};
 use std::path::Path;
@@ -26,7 +27,7 @@ fn run_transcript_command(app_paths: &AppPaths, force: bool, args: TranscriptArg
     validate_open_flag(args.open, args.output.as_deref())?;
 
     let run_paths = create_run_paths(app_paths, args.output.as_deref())?;
-    let result = pipeline::run_transcript(app_paths, force, &args, run_paths.as_ref());
+    let result = transcription::run_transcript(app_paths, force, &args, run_paths.as_ref());
     finish_run(run_paths, result)
 }
 
@@ -34,7 +35,7 @@ fn run_summarize_command(app_paths: &AppPaths, force: bool, args: SummarizeArgs)
     validate_open_flag(args.open, args.output.as_deref())?;
 
     let run_paths = create_run_paths(app_paths, args.output.as_deref())?;
-    let result = pipeline::run_summarize(app_paths, force, &args, run_paths.as_ref());
+    let result = summary::run_summarize(app_paths, force, &args, run_paths.as_ref());
     finish_run(run_paths, result)
 }
 
