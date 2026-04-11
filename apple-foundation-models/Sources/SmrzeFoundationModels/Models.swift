@@ -5,6 +5,13 @@ struct SummaryRequestPayload: Sendable {
     let turns: [String]
 }
 
+struct GemmaRequestPayload: Sendable {
+    let modelId: String
+    let localModelPath: String?
+    let prompt: String
+    let maxNewTokens: Int
+}
+
 struct SummaryActionItemPayload: Equatable, Sendable {
     let owner: String?
     let task: String
@@ -26,6 +33,17 @@ extension BridgeSummaryRequest {
     }
 }
 
+extension BridgeGemmaRequest {
+    func intoPayload() -> GemmaRequestPayload {
+        GemmaRequestPayload(
+            modelId: model_id.toString(),
+            localModelPath: local_model_path?.toString(),
+            prompt: prompt.toString(),
+            maxNewTokens: Int(max_new_tokens)
+        )
+    }
+}
+
 extension SummaryDocumentPayload {
     func intoBridge() -> BridgeSummaryDocument {
         BridgeSummaryDocument(
@@ -38,8 +56,16 @@ extension SummaryDocumentPayload {
     }
 }
 
+extension BridgeGemmaResponse {
+    init(text: String) {
+        self.init(text: RustString(text))
+    }
+}
+
 extension BridgeSummaryError: Error {}
 extension BridgeSummaryError: @unchecked Sendable {}
+extension BridgeGemmaError: Error {}
+extension BridgeGemmaError: @unchecked Sendable {}
 
 extension RustStringRef {
     func stringValue() -> String {

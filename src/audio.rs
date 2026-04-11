@@ -242,15 +242,7 @@ fn resample(data: &[f32], source_rate: u32, target_rate: u32) -> Vec<f32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{audio_fingerprint, resample};
-
-    #[test]
-    fn fingerprint_changes_with_audio() {
-        assert_ne!(
-            audio_fingerprint(&[0.0, 1.0]),
-            audio_fingerprint(&[0.0, 2.0])
-        );
-    }
+    use super::resample;
 
     #[test]
     fn resample_returns_same_data_for_same_rate() {

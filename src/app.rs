@@ -95,7 +95,6 @@ fn run_inner(
     };
 
     let pipeline = PipelineConfig {
-        app_paths,
         run_paths: run_paths.as_ref(),
         title: &resolved_input.display_name,
         summary_backend: selected_summary_backend(args),
@@ -118,7 +117,6 @@ fn run_inner(
 }
 
 struct PipelineConfig<'a> {
-    app_paths: &'a AppPaths,
     run_paths: Option<&'a RunPaths>,
     title: &'a str,
     summary_backend: Option<SummaryBackend>,
@@ -166,7 +164,6 @@ fn execute_pipeline(
             pipeline.title,
             &turns,
             summary_backend,
-            pipeline.app_paths,
             pipeline.summary_model_dir,
         ) {
             Ok(summary) => summary,
@@ -257,7 +254,37 @@ fn selected_summary_backend(args: &Args) -> Option<SummaryBackend> {
         return Some(summary_backend);
     }
     if args.summary {
-        return Some(SummaryBackend::AppleFoundation);
+        return Some(SummaryBackend::Gemma4E2b);
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::selected_summary_backend;
+    use crate::Args;
+    use clap::Parser;
+
+    #[test]
+    fn summary_defaults_to_gemma_e2b() {
+        let args = Args::parse_from(["smrze", "input.wav", "--summary"]);
+        assert_eq!(
+            selected_summary_backend(&args),
+            Some(crate::summary_backend::SummaryBackend::Gemma4E2b)
+        );
+    }
+
+    #[test]
+    fn explicit_summary_backend_wins() {
+        let args = Args::parse_from([
+            "smrze",
+            "input.wav",
+            "--summary-backend",
+            "apple-foundation",
+        ]);
+        assert_eq!(
+            selected_summary_backend(&args),
+            Some(crate::summary_backend::SummaryBackend::AppleFoundation)
+        );
+    }
 }

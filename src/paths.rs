@@ -36,11 +36,6 @@ impl AppPaths {
     pub fn speakrs_model_cache(&self) -> PathBuf {
         self.cache_dir.join("models").join("speakrs")
     }
-
-    pub fn gemma4_coreml_model_root(&self) -> PathBuf {
-        self.cache_dir.join("models").join("gemma4-coreml")
-    }
-
     pub fn create_run(&self, output_dir: &Path, run_id: &str) -> Result<RunPaths> {
         let scratch_dir = self.cache_dir.join("runs").join(run_id);
         fs::create_dir_all(&scratch_dir)
