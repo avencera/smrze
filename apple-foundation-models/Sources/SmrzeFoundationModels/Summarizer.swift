@@ -32,7 +32,7 @@ struct GeneratedSummary {
     let actionItems: [GeneratedActionItem]
 }
 
-func summarizeTranscript(request: BridgeSummaryRequest) throws(BridgeSummaryError) -> BridgeSummaryDocument {
+func summarizeTranscript(request: BridgeSummaryRequest) throws(BridgeSummaryError) -> BridgeSummaryResponse {
     let payload = request.intoPayload()
     let semaphore = DispatchSemaphore(value: 0)
     let box = SummaryResultBox()
@@ -40,7 +40,7 @@ func summarizeTranscript(request: BridgeSummaryRequest) throws(BridgeSummaryErro
     Task.detached {
         do {
             let summary = try await FoundationModelSummarizer().summarize(payload)
-            box.set(.success(summary))
+            box.set(.success(summary.renderMarkdown()))
         } catch let error as BridgeSummaryError {
             box.set(.failure(error))
         } catch {
@@ -53,7 +53,7 @@ func summarizeTranscript(request: BridgeSummaryRequest) throws(BridgeSummaryErro
     guard let result = box.get() else {
         throw .Internal(message: RustString("summary generation finished without a result"))
     }
-    return try result.get().intoBridge()
+    return BridgeSummaryResponse(text: try result.get())
 }
 
 struct FoundationModelSummarizer {
@@ -80,7 +80,10 @@ struct FoundationModelSummarizer {
         }
     }
 
-    private let model = SystemLanguageModel(useCase: .general, guardrails: .default)
+    private let model = SystemLanguageModel(
+        useCase: .general,
+        guardrails: .permissiveContentTransformations
+    )
     private let options = GenerationOptions(
         sampling: .greedy,
         temperature: nil,
@@ -501,15 +504,15 @@ struct FoundationModelSummarizer {
 
 final class SummaryResultBox: @unchecked Sendable {
     private let lock = NSLock()
-    private var result: Result<SummaryDocumentPayload, BridgeSummaryError>?
+    private var result: Result<String, BridgeSummaryError>?
 
-    func set(_ result: Result<SummaryDocumentPayload, BridgeSummaryError>) {
+    func set(_ result: Result<String, BridgeSummaryError>) {
         lock.lock()
         self.result = result
         lock.unlock()
     }
 
-    func get() -> Result<SummaryDocumentPayload, BridgeSummaryError>? {
+    func get() -> Result<String, BridgeSummaryError>? {
         lock.lock()
         defer { lock.unlock() }
         return result

@@ -45,14 +45,49 @@ extension BridgeGemmaRequest {
 }
 
 extension SummaryDocumentPayload {
-    func intoBridge() -> BridgeSummaryDocument {
-        BridgeSummaryDocument(
-            overview: RustString(overview),
-            key_points: rustStringVec(keyPoints),
-            decisions: rustStringVec(decisions),
-            action_item_owners: rustStringVec(actionItems.map(\.owner).map { $0 ?? "" }),
-            action_item_tasks: rustStringVec(actionItems.map(\.task))
-        )
+    func renderMarkdown() -> String {
+        var lines = [
+            "# Summary",
+            "",
+            "## Overview",
+            overview.trimmingCharacters(in: .whitespacesAndNewlines),
+            "",
+            "## Key Points",
+        ]
+
+        for keyPoint in keyPoints {
+            lines.append("- \(keyPoint.trimmingCharacters(in: .whitespacesAndNewlines))")
+        }
+
+        if !decisions.isEmpty {
+            lines.append("")
+            lines.append("## Decisions")
+            for decision in decisions {
+                lines.append("- \(decision.trimmingCharacters(in: .whitespacesAndNewlines))")
+            }
+        }
+
+        if !actionItems.isEmpty {
+            lines.append("")
+            lines.append("## Action Items")
+            for actionItem in actionItems {
+                let task = actionItem.task.trimmingCharacters(in: .whitespacesAndNewlines)
+                let owner = actionItem.owner?.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let owner, !owner.isEmpty {
+                    lines.append("- \(owner): \(task)")
+                } else {
+                    lines.append("- \(task)")
+                }
+            }
+        }
+
+        return lines.joined(separator: "\n")
+    }
+}
+
+extension BridgeSummaryResponse {
+    init(text: String) {
+        self.init(text: RustString(text))
     }
 }
 
@@ -71,12 +106,4 @@ extension RustStringRef {
     func stringValue() -> String {
         as_str().toString()
     }
-}
-
-func rustStringVec(_ values: [String]) -> RustVec<RustString> {
-    let result = RustVec<RustString>()
-    for value in values {
-        result.push(value: RustString(value))
-    }
-    return result
 }

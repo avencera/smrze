@@ -7,12 +7,8 @@ mod foundation_models_ffi {
     }
 
     #[swift_bridge(swift_repr = "struct")]
-    struct BridgeSummaryDocument {
-        overview: String,
-        key_points: Vec<String>,
-        decisions: Vec<String>,
-        action_item_owners: Vec<String>,
-        action_item_tasks: Vec<String>,
+    struct BridgeSummaryResponse {
+        text: String,
     }
 
     enum BridgeSummaryError {
@@ -54,7 +50,7 @@ mod foundation_models_ffi {
         #[swift_bridge(swift_name = "summarizeTranscript")]
         fn summarize_transcript(
             request: BridgeSummaryRequest,
-        ) -> Result<BridgeSummaryDocument, BridgeSummaryError>;
+        ) -> Result<BridgeSummaryResponse, BridgeSummaryError>;
 
         #[swift_bridge(swift_name = "generateGemmaText")]
         fn generate_gemma_text(
@@ -64,6 +60,6 @@ mod foundation_models_ffi {
 }
 
 pub use foundation_models_ffi::{
-    BridgeGemmaError, BridgeGemmaRequest, BridgeSummaryDocument, BridgeSummaryError,
-    BridgeSummaryRequest, generate_gemma_text, summarize_transcript,
+    BridgeGemmaError, BridgeGemmaRequest, BridgeSummaryError, BridgeSummaryRequest,
+    generate_gemma_text, summarize_transcript,
 };
