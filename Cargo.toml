@@ -1,5 +1,5 @@
 [workspace]
-members = ["xtask"]
+members = ["smrze-build-support", "xtask"]
 resolver = "2"
 
 [package]
@@ -33,5 +33,5 @@ url = "2.5"
 ndarray = "0.17.2"
 
 [build-dependencies]
-sha2 = "0.10"
+smrze-build-support = { path = "smrze-build-support" }
 swift-bridge-build = "0.1.59"

@@ -1,8 +1,11 @@
-use sha2::{Digest, Sha256};
+use smrze_build_support::{
+    blake3_file, cargo_profile_dir, developer_dir, ensure_local_mlx_repo, ensure_metal_toolchain,
+    find_file_named, mlx_repo_revision, run_checked_command, swift_triple_dir_for_target,
+    xcode_arch_for_target,
+};
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Command;
 
 fn main() {
     let context = BuildContext::current();
@@ -91,20 +94,7 @@ impl BuildContext {
     }
 
     fn ensure_local_mlx_repo(&self) {
-        if !self.local_mlx_repo_dir.exists() {
-            panic!(
-                "expected a local mlx-swift checkout at {}\nclone it with: git clone https://github.com/ml-explore/mlx-swift.git {}",
-                self.local_mlx_repo_dir.display(),
-                self.local_mlx_repo_dir.display()
-            );
-        }
-        if !self.mlx_device_cpp_path().exists() {
-            panic!(
-                "expected mlx-swift submodules to be initialized under {}\nrun: git -C {} submodule update --init --recursive",
-                self.local_mlx_repo_dir.display(),
-                self.local_mlx_repo_dir.display()
-            );
-        }
+        ensure_local_mlx_repo(&self.local_mlx_repo_dir).unwrap_or_else(|error| panic!("{error}"));
     }
 
     fn generate_swift_bridge(&self) {
@@ -134,7 +124,8 @@ impl BuildContext {
             command.arg("-c").arg("release");
         }
 
-        run_checked_command(&mut command, "xcrun swift build for summary bridge");
+        run_checked_command(&mut command, "xcrun swift build for summary bridge")
+            .unwrap_or_else(|error| panic!("{error}"));
     }
 
     fn compile_mlx_metallib(&self) -> PathBuf {
@@ -154,7 +145,8 @@ impl BuildContext {
             .arg("-derivedDataPath")
             .arg(self.mlx_derived_data_dir());
 
-        run_checked_command(&mut command, "xcodebuild for MLX metallib");
+        run_checked_command(&mut command, "xcodebuild for MLX metallib")
+            .unwrap_or_else(|error| panic!("{error}"));
 
         find_file_named(&self.mlx_build_products_dir(), "default.metallib").unwrap_or_else(|| {
             panic!(
@@ -170,8 +162,8 @@ impl BuildContext {
             self.mlx_repo_revision()
         );
         println!(
-            "cargo:rustc-env=SMRZE_MLX_RUNTIME_ASSET_SHA256={}",
-            sha256_file(metallib_path)
+            "cargo:rustc-env=SMRZE_MLX_RUNTIME_ASSET_BLAKE3={}",
+            blake3_file(metallib_path).unwrap_or_else(|error| panic!("{error}"))
         );
     }
 
@@ -196,27 +188,11 @@ impl BuildContext {
     }
 
     fn ensure_metal_toolchain(&self) {
-        let mut command = Command::new("xcrun");
-        command.arg("metal").arg("-v");
-        let output = command_output(&mut command, "xcrun metal -v")
-            .unwrap_or_else(|error| panic!("failed to run xcrun metal -v: {error}"));
-        if output.status.success() {
-            return;
-        }
-
-        panic!(
-            "the Metal Toolchain is required to build MLX Gemma summaries\nstdout:\n{}\nstderr:\n{}\ninstall it with: xcodebuild -downloadComponent MetalToolchain",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr),
-        );
+        ensure_metal_toolchain().unwrap_or_else(|error| panic!("{error}"));
     }
 
     fn cargo_profile_dir(&self) -> PathBuf {
-        self.out_dir
-            .ancestors()
-            .nth(3)
-            .unwrap_or_else(|| panic!("failed to resolve Cargo profile directory from OUT_DIR"))
-            .to_path_buf()
+        cargo_profile_dir(&self.out_dir).unwrap_or_else(|error| panic!("{error}"))
     }
 
     fn apple_foundation_models_dir(&self) -> PathBuf {
@@ -274,19 +250,11 @@ impl BuildContext {
     }
 
     fn current_xcode_arch(&self) -> &'static str {
-        match self.target_arch.as_str() {
-            "aarch64" => "arm64",
-            "x86_64" => "x86_64",
-            other => panic!("unsupported macOS arch for xcodebuild: {other}"),
-        }
+        xcode_arch_for_target(&self.target_arch).unwrap_or_else(|error| panic!("{error}"))
     }
 
     fn current_swift_triple_dir(&self) -> &'static str {
-        match self.target_arch.as_str() {
-            "aarch64" => "aarch64-apple-macosx",
-            "x86_64" => "x86_64-apple-macosx",
-            other => panic!("unsupported macOS arch for swift bridge: {other}"),
-        }
+        swift_triple_dir_for_target(&self.target_arch).unwrap_or_else(|error| panic!("{error}"))
     }
 
     fn xcode_build_configuration(&self) -> &'static str {
@@ -298,18 +266,7 @@ impl BuildContext {
     }
 
     fn mlx_repo_revision(&self) -> String {
-        let mut command = Command::new("git");
-        command
-            .arg("-C")
-            .arg(&self.local_mlx_repo_dir)
-            .arg("rev-parse")
-            .arg("HEAD");
-        let output = run_checked_command(&mut command, "git rev-parse HEAD for mlx-swift");
-
-        String::from_utf8(output.stdout)
-            .unwrap_or_else(|_| panic!("local mlx-swift revision should be utf-8"))
-            .trim()
-            .to_owned()
+        mlx_repo_revision(&self.local_mlx_repo_dir).unwrap_or_else(|error| panic!("{error}"))
     }
 }
 
@@ -321,60 +278,6 @@ fn required_env_path(name: &str) -> PathBuf {
     PathBuf::from(required_env(name))
 }
 
-fn developer_dir() -> String {
-    let mut command = Command::new("xcode-select");
-    command.arg("--print-path");
-    command_output(&mut command, "xcode-select --print-path")
-        .ok()
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .map(|output| output.trim().to_owned())
-        .filter(|output| !output.is_empty())
-        .unwrap_or_else(|| "/Applications/Xcode.app/Contents/Developer".to_owned())
-}
-
-fn run_checked_command(command: &mut Command, action: &str) -> Output {
-    let output = command_output(command, action)
-        .unwrap_or_else(|error| panic!("failed to run {action}: {error}"));
-    if output.status.success() {
-        return output;
-    }
-
-    panic!(
-        "{action} failed\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-    );
-}
-
-fn command_output(command: &mut Command, action: &str) -> Result<Output, std::io::Error> {
-    command
-        .output()
-        .map_err(|error| std::io::Error::new(error.kind(), format!("{action}: {error}")))
-}
-
-fn find_file_named(root: &Path, file_name: &str) -> Option<PathBuf> {
-    if !root.exists() {
-        return None;
-    }
-
-    let entries = fs::read_dir(root).ok()?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if let Some(found) = find_file_named(&path, file_name) {
-                return Some(found);
-            }
-            continue;
-        }
-
-        if path.file_name().and_then(|name| name.to_str()) == Some(file_name) {
-            return Some(path);
-        }
-    }
-
-    None
-}
-
 fn copy_file(source_path: &Path, output_path: &Path) {
     fs::copy(source_path, output_path).unwrap_or_else(|error| {
         panic!(
@@ -383,21 +286,4 @@ fn copy_file(source_path: &Path, output_path: &Path) {
             output_path.display()
         )
     });
-}
-
-fn sha256_file(path: &Path) -> String {
-    let mut file = fs::File::open(path)
-        .unwrap_or_else(|error| panic!("failed to open {}: {error}", path.display()));
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 8 * 1024];
-    loop {
-        let read = file
-            .read(&mut buffer)
-            .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    format!("{:x}", hasher.finalize())
 }

@@ -1,15 +1,16 @@
-use color_eyre::{
-    Result,
-    eyre::{Context, eyre},
-};
-use duct::cmd;
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
-use url::Url;
+mod download;
+mod local;
+mod remote;
 
-use crate::console;
-use crate::utils::{expand_path, file_stem_name, sanitize_name};
+use color_eyre::Result;
+use std::path::PathBuf;
+
+use crate::utils::{file_stem_name, sanitize_name};
+
+pub(crate) use download::{ensure_command, find_downloaded_media};
+pub use local::local_file_source_key;
+pub(crate) use local::resolve_existing_path;
+pub use remote::is_url;
 
 #[derive(Debug, Clone)]
 pub struct ResolvedMediaInput {
@@ -26,10 +27,10 @@ pub enum MediaInputKind {
 
 pub fn resolve_media_input(input: &str) -> Result<ResolvedMediaInput> {
     if is_url(input) {
-        let source_key = normalize_url_source_key(input)?;
+        let source_key = remote::normalize_url_source_key(input)?;
         return Ok(ResolvedMediaInput {
             display_name: sanitize_name(
-                &fetch_title(input).unwrap_or_else(|_| format!("input-{source_key}")),
+                &remote::fetch_title(input).unwrap_or_else(|_| format!("input-{source_key}")),
             ),
             source_key,
             kind: MediaInputKind::Url {
@@ -38,13 +39,7 @@ pub fn resolve_media_input(input: &str) -> Result<ResolvedMediaInput> {
         });
     }
 
-    let path = expand_path(Path::new(input))?
-        .canonicalize()
-        .with_context(|| format!("failed to resolve {input}"))?;
-    if !path.exists() {
-        return Err(eyre!("input file not found: {}", path.display()));
-    }
-
+    let path = resolve_existing_path(input)?;
     Ok(ResolvedMediaInput {
         display_name: sanitize_name(&file_stem_name(&path)?),
         source_key: local_file_source_key(&path)?,
@@ -52,151 +47,10 @@ pub fn resolve_media_input(input: &str) -> Result<ResolvedMediaInput> {
     })
 }
 
-pub fn is_url(value: &str) -> bool {
-    value.starts_with("http://") || value.starts_with("https://")
-}
-
-pub fn local_file_source_key(path: &Path) -> Result<String> {
-    let metadata = fs::metadata(path)
-        .with_context(|| format!("failed to read metadata for {}", path.display()))?;
-    let modified_ms = metadata
-        .modified()
-        .with_context(|| format!("failed to read modified time for {}", path.display()))?
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| eyre!("{} has an invalid modified time: {error}", path.display()))?
-        .as_millis();
-    Ok(format!(
-        "file:{}:{}:{}",
-        path.display(),
-        metadata.len(),
-        modified_ms
-    ))
-}
-
-fn fetch_title(url: &str) -> Result<String> {
-    let mut args = vec!["--print", "title", "--skip-download"];
-    if console::is_quiet() {
-        args.extend(["--quiet", "--no-warnings"]);
-    }
-    args.push(url);
-
-    let title_lookup = cmd("yt-dlp", args);
-    let title_lookup = if console::is_quiet() {
-        title_lookup.stderr_null()
-    } else {
-        title_lookup
-    };
-    let title = title_lookup
-        .read()
-        .with_context(|| "failed to launch yt-dlp for title lookup")?
-        .trim()
-        .to_owned();
-    if title.is_empty() {
-        return Err(eyre!("yt-dlp returned an empty title"));
-    }
-
-    Ok(title)
-}
-
-pub(crate) fn ensure_command(command: &str) -> Result<()> {
-    let output = cmd("which", [command])
-        .stdout_null()
-        .stderr_null()
-        .unchecked()
-        .run()
-        .with_context(|| format!("failed to check for {command}"))?;
-    if output.status.success() {
-        return Ok(());
-    }
-
-    Err(eyre!("{command} is required but was not found in PATH"))
-}
-
-fn normalize_url_source_key(input: &str) -> Result<String> {
-    let url = Url::parse(input).with_context(|| format!("failed to parse URL {input}"))?;
-    if let Some(video_id) = youtube_video_id(&url) {
-        return Ok(format!("youtube/{video_id}"));
-    }
-
-    let host = url
-        .host_str()
-        .ok_or_else(|| eyre!("URL is missing a host: {input}"))?
-        .to_ascii_lowercase();
-    let path = if url.path().is_empty() {
-        "/"
-    } else {
-        url.path()
-    };
-    let port = match (url.port(), default_port(url.scheme())) {
-        (Some(port), Some(default_port)) if port != default_port => format!(":{port}"),
-        (Some(port), None) => format!(":{port}"),
-        _ => String::new(),
-    };
-
-    Ok(format!("{host}{port}{path}"))
-}
-
-fn youtube_video_id(url: &Url) -> Option<String> {
-    let host = url.host_str()?.to_ascii_lowercase();
-    if host == "youtu.be" {
-        return url
-            .path_segments()?
-            .find(|segment| !segment.is_empty())
-            .map(ToOwned::to_owned);
-    }
-
-    if !host.ends_with("youtube.com") {
-        return None;
-    }
-
-    let mut segments = url.path_segments()?;
-    match segments.next()? {
-        "watch" => url
-            .query_pairs()
-            .find_map(|(key, value)| (key == "v").then(|| value.into_owned())),
-        "shorts" | "embed" => segments
-            .find(|segment| !segment.is_empty())
-            .map(ToOwned::to_owned),
-        _ => None,
-    }
-}
-
-fn default_port(scheme: &str) -> Option<u16> {
-    match scheme {
-        "http" => Some(80),
-        "https" => Some(443),
-        _ => None,
-    }
-}
-
-pub(crate) fn find_downloaded_media(download_dir: &Path) -> Result<PathBuf> {
-    for preferred in [
-        "download.m4a",
-        "download.mp4",
-        "download.aac",
-        "download.mp3",
-    ] {
-        let path = download_dir.join(preferred);
-        if path.exists() {
-            return Ok(path);
-        }
-    }
-
-    fs::read_dir(download_dir)?
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .find(|path| {
-            path.file_name()
-                .and_then(|value| value.to_str())
-                .map(|value| value.starts_with("download."))
-                .unwrap_or(false)
-        })
-        .ok_or_else(|| eyre!("yt-dlp reported success but no downloaded media was found"))
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{local_file_source_key, normalize_url_source_key, youtube_video_id};
+    use super::{local_file_source_key, remote::youtube_video_id};
+    use crate::input::remote::normalize_url_source_key;
     use color_eyre::Result;
     use std::fs;
     use std::path::PathBuf;

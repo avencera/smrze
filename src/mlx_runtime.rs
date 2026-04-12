@@ -1,6 +1,6 @@
+use blake3::Hasher;
 use color_eyre::{Result, eyre::Context};
 use hf_hub::{Cache, api::sync::ApiBuilder};
-use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -23,7 +23,7 @@ pub struct MlxMetallibAsset {
     install_root: PathBuf,
     huggingface_cache_dir: PathBuf,
     asset_version: &'static str,
-    asset_sha256: &'static str,
+    asset_blake3: &'static str,
     arch_dir: &'static str,
 }
 
@@ -33,7 +33,7 @@ impl MlxMetallibAsset {
             install_root: app_paths.mlx_runtime_cache(),
             huggingface_cache_dir: app_paths.huggingface_cache(),
             asset_version: env!("SMRZE_MLX_RUNTIME_ASSET_VERSION"),
-            asset_sha256: env!("SMRZE_MLX_RUNTIME_ASSET_SHA256"),
+            asset_blake3: env!("SMRZE_MLX_RUNTIME_ASSET_BLAKE3"),
             arch_dir: current_arch_dir()?,
         })
     }
@@ -101,24 +101,24 @@ impl MlxMetallibAsset {
     }
 
     fn matches_expected_digest(&self, path: &Path) -> Result<bool, MlxRuntimeError> {
-        let actual_digest = file_sha256(path).map_err(|error| MlxRuntimeError::InstallFailure {
+        let actual_digest = file_blake3(path).map_err(|error| MlxRuntimeError::InstallFailure {
             message: error.to_string(),
         })?;
-        Ok(actual_digest == self.asset_sha256)
+        Ok(actual_digest == self.asset_blake3)
     }
 
     fn verify_digest(&self, path: &Path) -> Result<(), MlxRuntimeError> {
-        let actual_digest = file_sha256(path).map_err(|error| MlxRuntimeError::InstallFailure {
+        let actual_digest = file_blake3(path).map_err(|error| MlxRuntimeError::InstallFailure {
             message: error.to_string(),
         })?;
-        if actual_digest == self.asset_sha256 {
+        if actual_digest == self.asset_blake3 {
             return Ok(());
         }
 
         Err(MlxRuntimeError::IntegrityFailure {
             message: format!(
-                "expected SHA-256 {} for {}, found {}",
-                self.asset_sha256,
+                "expected BLAKE3 {} for {}, found {}",
+                self.asset_blake3,
                 path.display(),
                 actual_digest
             ),
@@ -136,10 +136,10 @@ fn current_arch_dir() -> Result<&'static str, MlxRuntimeError> {
     }
 }
 
-fn file_sha256(path: &Path) -> Result<String> {
+fn file_blake3(path: &Path) -> Result<String> {
     let mut file =
         fs::File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
-    let mut hasher = Sha256::new();
+    let mut hasher = Hasher::new();
     let mut buffer = [0_u8; 8 * 1024];
     loop {
         let read = file
@@ -150,7 +150,7 @@ fn file_sha256(path: &Path) -> Result<String> {
         }
         hasher.update(&buffer[..read]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(hasher.finalize().to_hex().to_string())
 }
 
 #[cfg(test)]
@@ -163,7 +163,7 @@ mod tests {
             install_root: PathBuf::from("/tmp/smrze/runtime/mlx"),
             huggingface_cache_dir: PathBuf::from("/tmp/smrze/huggingface"),
             asset_version: "mlx-test-revision",
-            asset_sha256: "abc123",
+            asset_blake3: "abc123",
             arch_dir: "macos-arm64",
         }
     }

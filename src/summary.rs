@@ -28,6 +28,13 @@ impl SummaryMode {
             Self::Backend(backend) => backend.cache_key(),
         }
     }
+
+    pub const fn requested_label(self) -> &'static str {
+        match self {
+            Self::Auto => SummaryBackend::AppleFoundation.display_name(),
+            Self::Backend(backend) => backend.display_name(),
+        }
+    }
 }
 
 pub fn generate_summary(
@@ -37,7 +44,7 @@ pub fn generate_summary(
     summary_model_dir: Option<&Path>,
     app_paths: &AppPaths,
 ) -> Result<GeneratedSummary> {
-    if filtered_turns(turns).is_empty() {
+    if !turns.iter().any(has_text) {
         return Err(eyre!("cannot summarize an empty transcript"));
     }
 
@@ -51,41 +58,49 @@ pub fn generate_summary(
                 console::info(
                     "Apple Foundation refused this transcript, falling back to Gemma 4 E2B",
                 );
-                let markdown = generate_gemma_summary(
+                generate_with_backend(
                     title,
                     turns,
                     SummaryBackend::Gemma4E2b,
                     summary_model_dir,
                     app_paths,
-                )?;
-                Ok(GeneratedSummary {
-                    markdown,
-                    backend: SummaryBackend::Gemma4E2b,
-                })
+                )
             }
             Err(error) => Err(eyre!(error.message())),
         },
-        SummaryMode::Backend(SummaryBackend::AppleFoundation) => {
-            let markdown =
-                generate_apple_summary(title, turns).map_err(|error| eyre!(error.message()))?;
-            Ok(GeneratedSummary {
-                markdown,
-                backend: SummaryBackend::AppleFoundation,
-            })
-        }
-        SummaryMode::Backend(backend @ (SummaryBackend::Gemma4E2b | SummaryBackend::Gemma4E4b)) => {
-            let markdown =
-                generate_gemma_summary(title, turns, backend, summary_model_dir, app_paths)?;
-            Ok(GeneratedSummary { markdown, backend })
+        SummaryMode::Backend(backend) => {
+            generate_with_backend(title, turns, backend, summary_model_dir, app_paths)
         }
     }
 }
 
-fn generate_apple_summary(title: &str, turns: &[SpeakerTurn]) -> Result<String, SummaryError> {
+fn generate_with_backend(
+    title: &str,
+    turns: &[SpeakerTurn],
+    backend: SummaryBackend,
+    summary_model_dir: Option<&Path>,
+    app_paths: &AppPaths,
+) -> Result<GeneratedSummary> {
+    let markdown = match backend {
+        SummaryBackend::AppleFoundation => {
+            generate_apple_summary(title, turns).map_err(|error| eyre!(error.message()))?
+        }
+        SummaryBackend::Gemma4E2b | SummaryBackend::Gemma4E4b => {
+            generate_gemma_summary(title, turns, backend, summary_model_dir, app_paths)?
+        }
+    };
+    Ok(GeneratedSummary { markdown, backend })
+}
+
+fn generate_apple_summary(
+    title: &str,
+    turns: &[SpeakerTurn],
+) -> std::result::Result<String, SummaryError> {
     let request = SummaryRequest {
         title: title.to_owned(),
-        turns: filtered_turns(turns)
-            .into_iter()
+        turns: turns
+            .iter()
+            .filter(|turn| has_text(turn))
             .map(|turn| SummaryTurn {
                 speaker: turn.speaker.clone(),
                 text: turn.text.clone(),
@@ -122,12 +137,8 @@ fn generate_gemma_summary(
     Ok(raw_summary.trim().to_owned())
 }
 
-fn filtered_turns(turns: &[SpeakerTurn]) -> Vec<SpeakerTurn> {
-    turns
-        .iter()
-        .filter(|turn| !turn.text.trim().is_empty())
-        .cloned()
-        .collect()
+fn has_text(turn: &SpeakerTurn) -> bool {
+    !turn.text.trim().is_empty()
 }
 
 fn resolve_gemma_model_dir(
@@ -143,8 +154,9 @@ fn resolve_gemma_model_dir(
 }
 
 fn render_gemma_summary_prompt(title: &str, turns: &[SpeakerTurn]) -> String {
-    let transcript = filtered_turns(turns)
-        .into_iter()
+    let transcript = turns
+        .iter()
+        .filter(|turn| has_text(turn))
         .map(|turn| format!("{}: {}", turn.speaker.trim(), turn.text.trim()))
         .collect::<Vec<_>>()
         .join("\n");

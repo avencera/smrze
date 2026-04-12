@@ -2385,6 +2385,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "shellexpand",
+ "smrze-build-support",
  "speakrs",
  "swift-bridge",
  "swift-bridge-build",
@@ -2392,6 +2393,13 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+]
+
+[[package]]
+name = "smrze-build-support"
+version = "0.1.0"
+dependencies = [
+ "blake3",
 ]
 
 [[package]]
@@ -3657,7 +3665,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "color-eyre",
- "sha2",
+ "smrze-build-support",
 ]
 
 [[package]]
