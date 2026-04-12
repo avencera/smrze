@@ -24,18 +24,25 @@ pub fn run(cli: Cli) -> Result<()> {
 }
 
 fn run_transcript_command(app_paths: &AppPaths, force: bool, args: TranscriptArgs) -> Result<()> {
-    validate_open_flag(args.open, args.output.as_deref())?;
-
-    let run_paths = create_run_paths(app_paths, args.output.as_deref())?;
-    let result = transcription::run_transcript(app_paths, force, &args, run_paths.as_ref());
-    finish_run(run_paths, result)
+    run_command(app_paths, args.output.as_deref(), args.open, |run_paths| {
+        transcription::run_transcript(app_paths, force, &args, run_paths)
+    })
 }
 
 fn run_summarize_command(app_paths: &AppPaths, force: bool, args: SummarizeArgs) -> Result<()> {
-    validate_open_flag(args.open, args.output.as_deref())?;
+    run_command(app_paths, args.output.as_deref(), args.open, |run_paths| {
+        summary::run_summarize(app_paths, force, &args, run_paths)
+    })
+}
 
-    let run_paths = create_run_paths(app_paths, args.output.as_deref())?;
-    let result = summary::run_summarize(app_paths, force, &args, run_paths.as_ref());
+fn run_command<F>(app_paths: &AppPaths, output_dir: Option<&Path>, open: bool, run: F) -> Result<()>
+where
+    F: FnOnce(Option<&RunPaths>) -> Result<()>,
+{
+    validate_open_flag(open, output_dir)?;
+
+    let run_paths = create_run_paths(app_paths, output_dir)?;
+    let result = run(run_paths.as_ref());
     finish_run(run_paths, result)
 }
 

@@ -26,6 +26,46 @@ pub fn decode_audio(path: &std::path::Path) -> Result<DecodedAudio> {
     }
 }
 
+pub(crate) fn convert_media_to_wav(
+    media_path: &std::path::Path,
+    output_path: &std::path::Path,
+) -> Result<()> {
+    let input = media_path.display().to_string();
+    let output = output_path.display().to_string();
+    let result = cmd(
+        "ffmpeg",
+        [
+            "-y",
+            "-i",
+            input.as_str(),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-c:a",
+            "pcm_s16le",
+            output.as_str(),
+        ],
+    )
+    .stdout_null()
+    .stderr_capture()
+    .unchecked()
+    .run()
+    .with_context(|| format!("failed to launch ffmpeg for {}", media_path.display()))?;
+
+    if result.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    Err(eyre!(
+        "ffmpeg failed to normalize {}: {}",
+        media_path.display(),
+        stderr.trim()
+    ))
+}
+
 fn decode_audio_with_symphonia(
     path: &std::path::Path,
 ) -> std::result::Result<DecodedAudio, SymphoniaError> {
@@ -117,42 +157,10 @@ fn decode_audio_with_ffmpeg(path: &std::path::Path) -> Result<DecodedAudio> {
         short_hash(&path.display().to_string()),
         now_millis()?
     ));
-    let input_path = path.display().to_string();
-    let output_path = temp_path.display().to_string();
+    convert_media_to_wav(path, &temp_path)?;
 
-    let conversion_result = cmd(
-        "ffmpeg",
-        [
-            "-y",
-            "-i",
-            input_path.as_str(),
-            "-vn",
-            "-ac",
-            "1",
-            "-ar",
-            "16000",
-            "-c:a",
-            "pcm_s16le",
-            output_path.as_str(),
-        ],
-    )
-    .stderr_to_stdout()
-    .read();
-
-    let ffmpeg_output = match conversion_result {
-        Ok(output) => output,
-        Err(error) => {
-            return Err(eyre!("failed to transcode audio with ffmpeg: {error}"));
-        }
-    };
-
-    let wav = load_wav_file(&temp_path).with_context(|| {
-        format!(
-            "ffmpeg created an unreadable wav for {}: {}",
-            path.display(),
-            ffmpeg_output.trim()
-        )
-    });
+    let wav = load_wav_file(&temp_path)
+        .with_context(|| format!("failed to read {}", temp_path.display()));
 
     let cleanup_result = std::fs::remove_file(&temp_path);
     if let Err(error) = cleanup_result

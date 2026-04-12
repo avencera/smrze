@@ -194,43 +194,6 @@ pub(crate) fn find_downloaded_media(download_dir: &Path) -> Result<PathBuf> {
         .ok_or_else(|| eyre!("yt-dlp reported success but no downloaded media was found"))
 }
 
-pub(crate) fn convert_to_cached_audio(media_path: &Path, output_path: &Path) -> Result<()> {
-    let input = media_path.display().to_string();
-    let output = output_path.display().to_string();
-    let result = cmd(
-        "ffmpeg",
-        [
-            "-y",
-            "-i",
-            input.as_str(),
-            "-vn",
-            "-ac",
-            "1",
-            "-ar",
-            "16000",
-            "-c:a",
-            "pcm_s16le",
-            output.as_str(),
-        ],
-    )
-    .stdout_null()
-    .stderr_capture()
-    .unchecked()
-    .run()
-    .with_context(|| format!("failed to launch ffmpeg for {}", media_path.display()))?;
-
-    if result.status.success() {
-        return Ok(());
-    }
-
-    let stderr = String::from_utf8_lossy(&result.stderr);
-    Err(eyre!(
-        "ffmpeg failed to normalize {}: {}",
-        media_path.display(),
-        stderr.trim()
-    ))
-}
-
 #[cfg(test)]
 mod tests {
     use super::{local_file_source_key, normalize_url_source_key, youtube_video_id};

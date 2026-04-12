@@ -50,6 +50,29 @@ pub fn clear_cache_entry(app_paths: &AppPaths, kind: CacheKind, key_material: &s
     remove_dir_if_exists(&cache_entry_dir(app_paths, kind, key_material))
 }
 
+pub fn load_cache_entry<T, F>(
+    app_paths: &AppPaths,
+    kind: CacheKind,
+    key_material: &str,
+    force: bool,
+    load: F,
+) -> Result<Option<T>>
+where
+    F: FnOnce(&AppPaths, &str) -> Result<Option<T>>,
+{
+    if force {
+        clear_cache_entry(app_paths, kind, key_material)?;
+        return Ok(None);
+    }
+
+    if let Some(entry) = load(app_paths, key_material)? {
+        return Ok(Some(entry));
+    }
+
+    clear_cache_entry(app_paths, kind, key_material)?;
+    Ok(None)
+}
+
 pub fn spawn_cache_sweeper(app_paths: AppPaths) {
     let _ = thread::Builder::new()
         .name("smrze-cache-sweeper".to_owned())
@@ -98,7 +121,7 @@ fn sweep_cache_kind(app_paths: &AppPaths, kind: CacheKind) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CacheKind, cache_entry_dir, clear_cache_entry, ensure_cache_entry_dir,
+        CacheKind, cache_entry_dir, clear_cache_entry, ensure_cache_entry_dir, load_cache_entry,
         sweep_expired_entries, write_manifest,
     };
     use crate::paths::AppPaths;
@@ -137,6 +160,41 @@ mod tests {
         let app_paths = test_paths("smrze-cache-sweeper-clear");
         clear_cache_entry(&app_paths, CacheKind::Summary, "missing")?;
         let _ = fs::remove_dir_all(PathBuf::from(&app_paths.cache_dir));
+        Ok(())
+    }
+
+    #[test]
+    fn load_cache_entry_skips_loader_when_force_is_enabled() -> Result<()> {
+        let app_paths = test_paths("smrze-cache-load-force");
+        let key = "source-key";
+        ensure_cache_entry_dir(&app_paths, CacheKind::Audio, key)?;
+        let mut load_called = false;
+
+        let cached = load_cache_entry(&app_paths, CacheKind::Audio, key, true, |_, _| {
+            load_called = true;
+            Ok(Some("cached"))
+        })?;
+
+        assert!(cached.is_none());
+        assert!(!load_called);
+        assert!(!cache_entry_dir(&app_paths, CacheKind::Audio, key).exists());
+        let _ = fs::remove_dir_all(&app_paths.cache_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn load_cache_entry_clears_stale_dir_after_cache_miss() -> Result<()> {
+        let app_paths = test_paths("smrze-cache-load-miss");
+        let key = "source-key";
+        ensure_cache_entry_dir(&app_paths, CacheKind::Audio, key)?;
+
+        let cached = load_cache_entry(&app_paths, CacheKind::Audio, key, false, |_, _| {
+            Ok(None::<()>)
+        })?;
+
+        assert!(cached.is_none());
+        assert!(!cache_entry_dir(&app_paths, CacheKind::Audio, key).exists());
+        let _ = fs::remove_dir_all(&app_paths.cache_dir);
         Ok(())
     }
 }

@@ -4,17 +4,16 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, warn};
 
-use crate::audio::{decode_audio, normalize_audio};
+use crate::audio::{convert_media_to_wav, decode_audio, normalize_audio};
 use crate::cache::{
     AudioCacheEntry, CacheKind, CachedAudio, CachedTranscript, TranscriptCacheEntry,
-    clear_cache_entry, ensure_cache_entry_dir, load_audio, load_transcript, store_audio,
+    ensure_cache_entry_dir, load_audio, load_cache_entry, load_transcript, store_audio,
     store_transcript,
 };
 use crate::cli::TranscriptArgs;
 use crate::console;
 use crate::input::{
-    MediaInputKind, ResolvedMediaInput, convert_to_cached_audio, ensure_command,
-    find_downloaded_media, resolve_media_input,
+    MediaInputKind, ResolvedMediaInput, ensure_command, find_downloaded_media, resolve_media_input,
 };
 use crate::output::{commit_transcript, open_path, stage_transcript};
 use crate::paths::{AppPaths, RunPaths};
@@ -60,22 +59,15 @@ impl<'a> TranscriptionPipeline<'a> {
         &self,
         resolved_input: &ResolvedMediaInput,
     ) -> Result<CachedTranscript> {
-        if self.force {
-            clear_cache_entry(
-                self.app_paths,
-                CacheKind::Transcript,
-                &resolved_input.source_key,
-            )?;
-        } else if let Some(cached_transcript) =
-            load_transcript(self.app_paths, &resolved_input.source_key)?
-        {
-            return Ok(cached_transcript);
-        }
-        clear_cache_entry(
+        if let Some(cached_transcript) = load_cache_entry(
             self.app_paths,
             CacheKind::Transcript,
             &resolved_input.source_key,
-        )?;
+            self.force,
+            load_transcript,
+        )? {
+            return Ok(cached_transcript);
+        }
 
         let cached_audio = self.materialize_audio(resolved_input)?;
         let normalized_audio = load_normalized_audio(&cached_audio.audio_path)?;
@@ -100,12 +92,15 @@ impl<'a> TranscriptionPipeline<'a> {
     }
 
     fn materialize_audio(&self, resolved_input: &ResolvedMediaInput) -> Result<CachedAudio> {
-        if self.force {
-            clear_cache_entry(self.app_paths, CacheKind::Audio, &resolved_input.source_key)?;
-        } else if let Some(cached_audio) = load_audio(self.app_paths, &resolved_input.source_key)? {
+        if let Some(cached_audio) = load_cache_entry(
+            self.app_paths,
+            CacheKind::Audio,
+            &resolved_input.source_key,
+            self.force,
+            load_audio,
+        )? {
             return Ok(cached_audio);
         }
-        clear_cache_entry(self.app_paths, CacheKind::Audio, &resolved_input.source_key)?;
 
         let entry_dir =
             ensure_cache_entry_dir(self.app_paths, CacheKind::Audio, &resolved_input.source_key)?;
@@ -138,11 +133,11 @@ impl<'a> TranscriptionPipeline<'a> {
                     .file_name()
                     .and_then(|value| value.to_str())
                     .map(ToOwned::to_owned);
-                convert_to_cached_audio(&media_path, &audio_path)?;
+                convert_media_to_wav(&media_path, &audio_path)?;
             }
             MediaInputKind::LocalFile { path } => {
                 ensure_command("ffmpeg")?;
-                convert_to_cached_audio(path, &audio_path)?;
+                convert_media_to_wav(path, &audio_path)?;
             }
         }
 

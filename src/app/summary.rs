@@ -9,7 +9,7 @@ use tracing::debug;
 
 use super::transcription::TranscriptionPipeline;
 use crate::cache::{
-    CacheKind, SummaryCacheEntry, clear_cache_entry, load_summary, store_summary, summary_cache_key,
+    CacheKind, SummaryCacheEntry, load_cache_entry, load_summary, store_summary, summary_cache_key,
 };
 use crate::cli::SummarizeArgs;
 use crate::console;
@@ -135,15 +135,18 @@ impl<'a> SummaryGenerator<'a> {
             summary_mode,
             summary_model_dir,
         );
-        if self.force {
-            clear_cache_entry(self.app_paths, CacheKind::Summary, &cache_key)?;
-        } else if let Some(cached_summary) = load_summary(self.app_paths, &cache_key)? {
+        if let Some(cached_summary) = load_cache_entry(
+            self.app_paths,
+            CacheKind::Summary,
+            &cache_key,
+            self.force,
+            load_summary,
+        )? {
             return Ok(GeneratedSummary {
                 markdown: cached_summary.markdown,
                 backend: cached_summary.backend,
             });
         }
-        clear_cache_entry(self.app_paths, CacheKind::Summary, &cache_key)?;
 
         console::info(format!(
             "Generating summary with {}",
