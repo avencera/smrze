@@ -37,7 +37,13 @@ pub fn summarize_transcript(request: SummaryRequest) -> Result<String, SummaryEr
         turns: request
             .turns
             .into_iter()
-            .map(|turn| format!("{}: {}", turn.speaker.trim(), turn.text.trim()))
+            .map(|turn| {
+                if turn.speaker.trim().is_empty() {
+                    return turn.text.trim().to_owned();
+                }
+
+                format!("{}: {}", turn.speaker.trim(), turn.text.trim())
+            })
             .collect(),
     };
     let summary = summarize_transcript_bridge(bridge_request)?;

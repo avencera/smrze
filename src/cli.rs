@@ -66,10 +66,10 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Generate a diarized transcript from a media file or URL
-    #[command(visible_alias = "t", visible_alias = "trans")]
+    #[command(visible_aliases = ["t", "trans"])]
     Transcript(TranscriptArgs),
     /// Generate a summary from a transcript file, media file, or URL
-    #[command(visible_alias = "s", visible_alias = "sum")]
+    #[command(visible_aliases = ["s", "sum"])]
     Summarize(SummarizeArgs),
 }
 
