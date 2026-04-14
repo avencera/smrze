@@ -4,12 +4,14 @@ mod remote;
 
 use color_eyre::Result;
 use std::path::PathBuf;
+use tracing::debug;
 
 use crate::utils::{file_stem_name, sanitize_name};
 
 pub(crate) use download::{ensure_command, find_downloaded_media};
 pub use local::local_file_source_key;
 pub(crate) use local::resolve_existing_path;
+pub(crate) use remote::fetch_title;
 pub use remote::is_url;
 
 #[derive(Debug, Clone)]
@@ -27,11 +29,10 @@ pub enum MediaInputKind {
 
 pub fn resolve_media_input(input: &str) -> Result<ResolvedMediaInput> {
     if is_url(input) {
+        debug!("Computing remote cache key for {input}");
         let source_key = remote::normalize_url_source_key(input)?;
         return Ok(ResolvedMediaInput {
-            display_name: sanitize_name(
-                &remote::fetch_title(input).unwrap_or_else(|_| format!("input-{source_key}")),
-            ),
+            display_name: fallback_remote_display_name(&source_key),
             source_key,
             kind: MediaInputKind::Url {
                 url: input.to_owned(),
@@ -39,6 +40,7 @@ pub fn resolve_media_input(input: &str) -> Result<ResolvedMediaInput> {
         });
     }
 
+    debug!("Resolving local media input path {input}");
     let path = resolve_existing_path(input)?;
     Ok(ResolvedMediaInput {
         display_name: sanitize_name(&file_stem_name(&path)?),
@@ -47,9 +49,13 @@ pub fn resolve_media_input(input: &str) -> Result<ResolvedMediaInput> {
     })
 }
 
+fn fallback_remote_display_name(source_key: &str) -> String {
+    sanitize_name(&source_key.replace('/', "-"))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{local_file_source_key, remote::youtube_video_id};
+    use super::{fallback_remote_display_name, local_file_source_key, remote::youtube_video_id};
     use crate::input::remote::normalize_url_source_key;
     use color_eyre::Result;
     use std::fs;
@@ -86,5 +92,13 @@ mod tests {
         assert_ne!(first_key, second_key);
         let _ = fs::remove_dir_all(PathBuf::from(&root));
         Ok(())
+    }
+
+    #[test]
+    fn remote_display_name_uses_source_key_without_title_lookup() {
+        assert_eq!(
+            fallback_remote_display_name("youtube/WbLPQ7XRpLs"),
+            "youtube-wblpq7xrpls"
+        );
     }
 }

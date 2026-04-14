@@ -2,6 +2,7 @@ mod audio;
 mod pipeline;
 
 use color_eyre::Result;
+use tracing::debug;
 
 use crate::cli::TranscriptArgs;
 use crate::input::resolve_media_input;
@@ -16,6 +17,7 @@ pub(super) fn run_transcript(
     args: &TranscriptArgs,
     run_paths: Option<&RunPaths>,
 ) -> Result<()> {
+    debug!("Starting transcript command for {}", args.input);
     let resolved_input = resolve_media_input(&args.input)?;
     let pipeline = TranscriptionPipeline::new(app_paths, force);
     let transcript = pipeline.transcribe_resolved_input(&resolved_input)?;

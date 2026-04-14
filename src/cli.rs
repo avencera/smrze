@@ -66,10 +66,10 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Generate a diarized transcript from a media file or URL
-    #[command(alias = "t")]
+    #[command(visible_alias = "t", visible_alias = "trans")]
     Transcript(TranscriptArgs),
     /// Generate a summary from a transcript file, media file, or URL
-    #[command(alias = "s")]
+    #[command(visible_alias = "s", visible_alias = "sum")]
     Summarize(SummarizeArgs),
 }
 
@@ -106,7 +106,7 @@ pub struct SummarizeArgs {
 #[cfg(test)]
 mod tests {
     use super::{Cli, Command};
-    use clap::Parser;
+    use clap::{CommandFactory, Parser};
 
     #[test]
     fn transcript_alias_parses() {
@@ -121,9 +121,27 @@ mod tests {
     }
 
     #[test]
+    fn extended_aliases_parse() {
+        let cli = Cli::parse_from(["smrze", "trans", "input.wav"]);
+        assert!(matches!(cli.command, Command::Transcript(_)));
+
+        let cli = Cli::parse_from(["smrze", "sum", "transcript.txt"]);
+        assert!(matches!(cli.command, Command::Summarize(_)));
+    }
+
+    #[test]
     fn global_flags_parse_before_subcommand() {
         let cli = Cli::parse_from(["smrze", "--quiet", "--force", "transcript", "input.wav"]);
         assert!(cli.quiet);
         assert!(cli.force);
+    }
+
+    #[test]
+    fn help_shows_visible_aliases() {
+        let help = Cli::command().render_help().to_string();
+        assert!(help.contains("transcript"));
+        assert!(help.contains("[aliases: t, trans]"));
+        assert!(help.contains("summarize"));
+        assert!(help.contains("[aliases: s, sum]"));
     }
 }

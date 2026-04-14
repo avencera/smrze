@@ -3,6 +3,8 @@ use color_eyre::{
     eyre::{Context, eyre},
 };
 use duct::cmd;
+use std::time::Instant;
+use tracing::debug;
 use url::Url;
 
 use crate::console;
@@ -11,7 +13,9 @@ pub fn is_url(value: &str) -> bool {
     value.starts_with("http://") || value.starts_with("https://")
 }
 
-pub(super) fn fetch_title(url: &str) -> Result<String> {
+pub(crate) fn fetch_title(url: &str) -> Result<String> {
+    debug!("Looking up media title with yt-dlp for {url}");
+    let started = Instant::now();
     let mut args = vec!["--print", "title", "--skip-download"];
     if console::is_quiet() {
         args.extend(["--quiet", "--no-warnings"]);
@@ -29,6 +33,10 @@ pub(super) fn fetch_title(url: &str) -> Result<String> {
         .with_context(|| "failed to launch yt-dlp for title lookup")?
         .trim()
         .to_owned();
+    debug!(
+        "Finished media title lookup in {:.2}s for {url}",
+        started.elapsed().as_secs_f64()
+    );
     if title.is_empty() {
         return Err(eyre!("yt-dlp returned an empty title"));
     }

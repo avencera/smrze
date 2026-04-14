@@ -28,6 +28,10 @@ impl<'a> TranscriptionPipeline<'a> {
         &self,
         resolved_input: &ResolvedMediaInput,
     ) -> Result<CachedTranscript> {
+        debug!(
+            "Checking transcript cache for source key {}",
+            resolved_input.source_key
+        );
         if let Some(cached_transcript) = load_cache_entry(
             self.app_paths,
             CacheKind::Transcript,
@@ -35,8 +39,16 @@ impl<'a> TranscriptionPipeline<'a> {
             self.force,
             load_transcript,
         )? {
+            debug!(
+                "Transcript cache hit for source key {}",
+                resolved_input.source_key
+            );
             return Ok(cached_transcript);
         }
+        debug!(
+            "Transcript cache miss for source key {}",
+            resolved_input.source_key
+        );
 
         let cached_audio =
             AudioMaterializer::new(self.app_paths, self.force).materialize(resolved_input)?;
@@ -46,7 +58,7 @@ impl<'a> TranscriptionPipeline<'a> {
             self.app_paths,
             TranscriptCacheEntry {
                 source_key: &resolved_input.source_key,
-                display_name: &resolved_input.display_name,
+                display_name: &cached_audio.display_name,
                 transcript: &transcript,
                 turns: &turns,
             },
