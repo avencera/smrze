@@ -2,13 +2,20 @@ use color_eyre::{Result, eyre::Context};
 use serde::{Deserialize, Serialize};
 use std::fs;
 
-use super::{
-    CacheKind, MANIFEST_FILE_NAME, cache_file_path, ensure_cache_entry_dir, load_manifest,
-    write_json_file, write_manifest, write_text_file,
-};
 use crate::paths::AppPaths;
 use crate::speakers::SpeakerTurn;
 use crate::utils::{hash_string, now_millis_u64};
+
+use super::access::load_cache_entry;
+use super::support::{
+    CacheSpec, MANIFEST_FILE_NAME, cache_file_path, ensure_cache_entry_dir, load_manifest,
+    write_json_file, write_manifest, write_text_file,
+};
+
+pub(crate) const TRANSCRIPT_CACHE_SPEC: CacheSpec = CacheSpec::new(
+    "transcripts",
+    std::time::Duration::from_secs(30 * 24 * 60 * 60),
+);
 
 #[derive(Debug, Clone)]
 pub struct CachedTranscript {
@@ -37,22 +44,25 @@ struct TranscriptManifest {
     turns_file_name: String,
 }
 
-pub fn load_transcript(app_paths: &AppPaths, source_key: &str) -> Result<Option<CachedTranscript>> {
+pub(crate) fn load_transcript(
+    app_paths: &AppPaths,
+    source_key: &str,
+) -> Result<Option<CachedTranscript>> {
     let Some(manifest) =
-        load_manifest::<TranscriptManifest>(app_paths, CacheKind::Transcript, source_key)?
+        load_manifest::<TranscriptManifest>(app_paths, &TRANSCRIPT_CACHE_SPEC, source_key)?
     else {
         return Ok(None);
     };
 
     let transcript_path = cache_file_path(
         app_paths,
-        CacheKind::Transcript,
+        &TRANSCRIPT_CACHE_SPEC,
         source_key,
         &manifest.transcript_file_name,
     );
     let turns_path = cache_file_path(
         app_paths,
-        CacheKind::Transcript,
+        &TRANSCRIPT_CACHE_SPEC,
         source_key,
         &manifest.turns_file_name,
     );
@@ -77,8 +87,22 @@ pub fn load_transcript(app_paths: &AppPaths, source_key: &str) -> Result<Option<
     }))
 }
 
+pub fn load_cached_transcript(
+    app_paths: &AppPaths,
+    source_key: &str,
+    force: bool,
+) -> Result<Option<CachedTranscript>> {
+    load_cache_entry(
+        app_paths,
+        &TRANSCRIPT_CACHE_SPEC,
+        source_key,
+        force,
+        load_transcript,
+    )
+}
+
 pub fn store_transcript(app_paths: &AppPaths, entry: TranscriptCacheEntry<'_>) -> Result<()> {
-    let entry_dir = ensure_cache_entry_dir(app_paths, CacheKind::Transcript, entry.source_key)?;
+    let entry_dir = ensure_cache_entry_dir(app_paths, &TRANSCRIPT_CACHE_SPEC, entry.source_key)?;
     let transcript_path = entry_dir.join("transcript.txt");
     let turns_path = entry_dir.join("turns.json");
     write_text_file(&transcript_path, entry.transcript)?;
@@ -100,7 +124,7 @@ pub fn store_transcript(app_paths: &AppPaths, entry: TranscriptCacheEntry<'_>) -
 #[cfg(test)]
 mod tests {
     use super::{TranscriptCacheEntry, load_transcript, store_transcript};
-    use crate::cache::{CacheKind, MANIFEST_FILE_NAME, cache_entry_dir};
+    use crate::cache::{MANIFEST_FILE_NAME, cache_entry_dir};
     use crate::paths::AppPaths;
     use crate::speakers::SpeakerTurn;
     use color_eyre::Result;
@@ -138,8 +162,12 @@ mod tests {
         assert_eq!(cached_transcript.source_key, "source-key");
         assert_eq!(cached_transcript.turns, turns);
 
-        let manifest_path = cache_entry_dir(&app_paths, CacheKind::Transcript, "source-key")
-            .join(MANIFEST_FILE_NAME);
+        let manifest_path = cache_entry_dir(
+            &app_paths,
+            &crate::cache::TRANSCRIPT_CACHE_SPEC,
+            "source-key",
+        )
+        .join(MANIFEST_FILE_NAME);
         let manifest: Value = serde_json::from_str(&fs::read_to_string(&manifest_path)?)?;
         assert_eq!(manifest["source_key"], "source-key");
         assert_eq!(manifest["display_name"], "meeting");

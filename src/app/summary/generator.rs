@@ -4,9 +4,7 @@ use std::time::Instant;
 use tracing::debug;
 
 use super::input::SummaryInput;
-use crate::cache::{
-    CacheKind, SummaryCacheEntry, load_cache_entry, load_summary, store_summary, summary_cache_key,
-};
+use crate::cache::{SummaryCacheEntry, load_cached_summary, store_summary, summary_cache_key};
 use crate::console;
 use crate::paths::AppPaths;
 use crate::summary::{GeneratedSummary, SummaryMode, generate_summary};
@@ -33,13 +31,7 @@ impl<'a> SummaryGenerator<'a> {
             summary_mode,
             summary_model_dir,
         );
-        if let Some(cached_summary) = load_cache_entry(
-            self.app_paths,
-            CacheKind::Summary,
-            &cache_key,
-            self.force,
-            load_summary,
-        )? {
+        if let Some(cached_summary) = load_cached_summary(self.app_paths, &cache_key, self.force)? {
             return Ok(GeneratedSummary {
                 markdown: cached_summary.markdown,
                 backend: cached_summary.backend,

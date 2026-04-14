@@ -4,8 +4,7 @@ use tracing::{debug, warn};
 
 use super::audio::{AudioMaterializer, load_normalized_audio};
 use crate::cache::{
-    CacheKind, CachedTranscript, TranscriptCacheEntry, load_cache_entry, load_transcript,
-    store_transcript,
+    CachedTranscript, TranscriptCacheEntry, load_cached_transcript, store_transcript,
 };
 use crate::input::ResolvedMediaInput;
 use crate::paths::AppPaths;
@@ -32,13 +31,9 @@ impl<'a> TranscriptionPipeline<'a> {
             "Checking transcript cache for source key {}",
             resolved_input.source_key
         );
-        if let Some(cached_transcript) = load_cache_entry(
-            self.app_paths,
-            CacheKind::Transcript,
-            &resolved_input.source_key,
-            self.force,
-            load_transcript,
-        )? {
+        if let Some(cached_transcript) =
+            load_cached_transcript(self.app_paths, &resolved_input.source_key, self.force)?
+        {
             debug!(
                 "Transcript cache hit for source key {}",
                 resolved_input.source_key

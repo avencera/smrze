@@ -3,14 +3,21 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
-use super::{
-    CacheKind, MANIFEST_FILE_NAME, cache_file_path, ensure_cache_entry_dir, load_manifest,
-    write_manifest, write_text_file,
-};
 use crate::paths::AppPaths;
 use crate::summary::SummaryMode;
 use crate::summary_backend::SummaryBackend;
 use crate::utils::now_millis_u64;
+
+use super::access::load_cache_entry;
+use super::support::{
+    CacheSpec, MANIFEST_FILE_NAME, cache_file_path, ensure_cache_entry_dir, load_manifest,
+    write_manifest, write_text_file,
+};
+
+pub(crate) const SUMMARY_CACHE_SPEC: CacheSpec = CacheSpec::new(
+    "summaries",
+    std::time::Duration::from_secs(90 * 24 * 60 * 60),
+);
 
 #[derive(Debug, Clone)]
 pub struct CachedSummary {
@@ -43,15 +50,15 @@ struct SummaryManifest {
     summary_file_name: String,
 }
 
-pub fn load_summary(app_paths: &AppPaths, cache_key: &str) -> Result<Option<CachedSummary>> {
+pub(crate) fn load_summary(app_paths: &AppPaths, cache_key: &str) -> Result<Option<CachedSummary>> {
     let Some(manifest) =
-        load_manifest::<SummaryManifest>(app_paths, CacheKind::Summary, cache_key)?
+        load_manifest::<SummaryManifest>(app_paths, &SUMMARY_CACHE_SPEC, cache_key)?
     else {
         return Ok(None);
     };
     let summary_path = cache_file_path(
         app_paths,
-        CacheKind::Summary,
+        &SUMMARY_CACHE_SPEC,
         cache_key,
         &manifest.summary_file_name,
     );
@@ -66,8 +73,22 @@ pub fn load_summary(app_paths: &AppPaths, cache_key: &str) -> Result<Option<Cach
     }))
 }
 
+pub fn load_cached_summary(
+    app_paths: &AppPaths,
+    cache_key: &str,
+    force: bool,
+) -> Result<Option<CachedSummary>> {
+    load_cache_entry(
+        app_paths,
+        &SUMMARY_CACHE_SPEC,
+        cache_key,
+        force,
+        load_summary,
+    )
+}
+
 pub fn store_summary(app_paths: &AppPaths, entry: SummaryCacheEntry<'_>) -> Result<()> {
-    let entry_dir = ensure_cache_entry_dir(app_paths, CacheKind::Summary, entry.cache_key)?;
+    let entry_dir = ensure_cache_entry_dir(app_paths, &SUMMARY_CACHE_SPEC, entry.cache_key)?;
     let summary_path = entry_dir.join("summary.md");
     write_text_file(&summary_path, entry.markdown)?;
     write_manifest(
@@ -115,7 +136,7 @@ fn parse_summary_backend(value: &str) -> Result<SummaryBackend> {
 #[cfg(test)]
 mod tests {
     use super::{SummaryCacheEntry, load_summary, store_summary};
-    use crate::cache::{CacheKind, MANIFEST_FILE_NAME, cache_entry_dir};
+    use crate::cache::{MANIFEST_FILE_NAME, cache_entry_dir};
     use crate::paths::AppPaths;
     use crate::summary::SummaryMode;
     use crate::summary_backend::SummaryBackend;
@@ -153,7 +174,8 @@ mod tests {
         assert_eq!(cached_summary.backend, SummaryBackend::AppleFoundation);
 
         let manifest_path =
-            cache_entry_dir(&app_paths, CacheKind::Summary, cache_key).join(MANIFEST_FILE_NAME);
+            cache_entry_dir(&app_paths, &crate::cache::SUMMARY_CACHE_SPEC, cache_key)
+                .join(MANIFEST_FILE_NAME);
         let manifest: Value = serde_json::from_str(&fs::read_to_string(&manifest_path)?)?;
         assert_eq!(manifest["source_key"], "source-key");
         assert_eq!(manifest["display_name"], "meeting");

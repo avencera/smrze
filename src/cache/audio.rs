@@ -2,12 +2,17 @@ use color_eyre::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use super::{
-    CacheKind, MANIFEST_FILE_NAME, cache_file_path, ensure_cache_entry_dir, load_manifest,
-    write_manifest,
-};
 use crate::paths::AppPaths;
 use crate::utils::now_millis_u64;
+
+use super::access::load_cache_entry;
+use super::support::{
+    CacheSpec, MANIFEST_FILE_NAME, cache_file_path, ensure_cache_entry_dir, load_manifest,
+    write_manifest,
+};
+
+pub(crate) const AUDIO_CACHE_SPEC: CacheSpec =
+    CacheSpec::new("audio", std::time::Duration::from_secs(24 * 60 * 60));
 
 #[derive(Debug, Clone)]
 pub struct CachedAudio {
@@ -33,14 +38,14 @@ struct AudioManifest {
     media_file_name: Option<String>,
 }
 
-pub fn load_audio(app_paths: &AppPaths, source_key: &str) -> Result<Option<CachedAudio>> {
-    let Some(manifest) = load_manifest::<AudioManifest>(app_paths, CacheKind::Audio, source_key)?
+pub(crate) fn load_audio(app_paths: &AppPaths, source_key: &str) -> Result<Option<CachedAudio>> {
+    let Some(manifest) = load_manifest::<AudioManifest>(app_paths, &AUDIO_CACHE_SPEC, source_key)?
     else {
         return Ok(None);
     };
     let audio_path = cache_file_path(
         app_paths,
-        CacheKind::Audio,
+        &AUDIO_CACHE_SPEC,
         source_key,
         &manifest.audio_file_name,
     );
@@ -54,8 +59,16 @@ pub fn load_audio(app_paths: &AppPaths, source_key: &str) -> Result<Option<Cache
     }))
 }
 
+pub fn load_cached_audio(
+    app_paths: &AppPaths,
+    source_key: &str,
+    force: bool,
+) -> Result<Option<CachedAudio>> {
+    load_cache_entry(app_paths, &AUDIO_CACHE_SPEC, source_key, force, load_audio)
+}
+
 pub fn store_audio(app_paths: &AppPaths, entry: AudioCacheEntry<'_>) -> Result<PathBuf> {
-    let entry_dir = ensure_cache_entry_dir(app_paths, CacheKind::Audio, entry.source_key)?;
+    let entry_dir = ensure_audio_cache_entry_dir(app_paths, entry.source_key)?;
     let manifest_path = entry_dir.join(MANIFEST_FILE_NAME);
     write_manifest(
         &manifest_path,
@@ -68,6 +81,18 @@ pub fn store_audio(app_paths: &AppPaths, entry: AudioCacheEntry<'_>) -> Result<P
         },
     )?;
     Ok(entry_dir.join(entry.audio_file_name))
+}
+
+#[cfg(test)]
+pub(crate) fn clear_audio_cache_entry(app_paths: &AppPaths, source_key: &str) -> Result<()> {
+    super::access::clear_cache_entry(app_paths, &AUDIO_CACHE_SPEC, source_key)
+}
+
+pub(crate) fn ensure_audio_cache_entry_dir(
+    app_paths: &AppPaths,
+    source_key: &str,
+) -> Result<PathBuf> {
+    ensure_cache_entry_dir(app_paths, &AUDIO_CACHE_SPEC, source_key)
 }
 
 #[cfg(test)]

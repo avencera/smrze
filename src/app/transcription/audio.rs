@@ -7,8 +7,7 @@ use tracing::{debug, warn};
 
 use crate::audio::{convert_media_to_wav, decode_audio, normalize_audio};
 use crate::cache::{
-    AudioCacheEntry, CacheKind, CachedAudio, ensure_cache_entry_dir, load_audio, load_cache_entry,
-    store_audio,
+    AudioCacheEntry, CachedAudio, ensure_audio_cache_entry_dir, load_cached_audio, store_audio,
 };
 use crate::console;
 use crate::input::{
@@ -32,13 +31,9 @@ impl<'a> AudioMaterializer<'a> {
             "Checking audio cache for source key {}",
             resolved_input.source_key
         );
-        if let Some(cached_audio) = load_cache_entry(
-            self.app_paths,
-            CacheKind::Audio,
-            &resolved_input.source_key,
-            self.force,
-            load_audio,
-        )? {
+        if let Some(cached_audio) =
+            load_cached_audio(self.app_paths, &resolved_input.source_key, self.force)?
+        {
             debug!(
                 "Audio cache hit for source key {}",
                 resolved_input.source_key
@@ -50,8 +45,7 @@ impl<'a> AudioMaterializer<'a> {
             resolved_input.source_key
         );
 
-        let entry_dir =
-            ensure_cache_entry_dir(self.app_paths, CacheKind::Audio, &resolved_input.source_key)?;
+        let entry_dir = ensure_audio_cache_entry_dir(self.app_paths, &resolved_input.source_key)?;
         let audio_path = entry_dir.join("audio.wav");
         let display_name = self.resolve_display_name(resolved_input);
         let media_file_name = self.write_audio_file(resolved_input, &entry_dir, &audio_path)?;
