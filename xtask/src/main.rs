@@ -6,8 +6,8 @@ use color_eyre::{
     eyre::{Context, bail, eyre},
 };
 use smrze_build_support::{
-    blake3_file, current_runtime_arch_dir, current_xcode_arch, ensure_local_mlx_repo,
-    ensure_metal_toolchain, find_file_named, mlx_repo_revision,
+    blake3_file, build_mlx_metallib, current_runtime_arch_dir, current_xcode_arch,
+    ensure_local_mlx_repo, ensure_metal_toolchain, mlx_repo_revision,
 };
 
 const HF_RUNTIME_REPO: &str = "avencera/smrze-runtime-assets";
@@ -96,29 +96,12 @@ fn publish_mlx_metallib() -> Result<()> {
     ensure_metal_toolchain()?;
 
     let derived_data_dir = workspace_root.join("target/mlx-runtime-assets");
-    let status = Command::new("xcodebuild")
-        .arg("build")
-        .arg("-project")
-        .arg(mlx_repo_dir.join("xcode/MLX.xcodeproj"))
-        .arg("-scheme")
-        .arg("Cmlx")
-        .arg("-configuration")
-        .arg("Release")
-        .arg("-destination")
-        .arg(format!("platform=macOS,arch={}", current_xcode_arch()?))
-        .arg("-derivedDataPath")
-        .arg(&derived_data_dir)
-        .status()
-        .with_context(|| "failed to run xcodebuild for the MLX metallib asset")?;
-    if !status.success() {
-        bail!("xcodebuild failed while building the MLX metallib asset");
-    }
-
-    let metallib_path = find_file_named(
-        &derived_data_dir.join("Build/Products/Release"),
-        "default.metallib",
-    )
-    .ok_or_else(|| eyre!("failed to locate default.metallib after xcodebuild"))?;
+    let metallib_path = build_mlx_metallib(
+        &mlx_repo_dir,
+        &derived_data_dir,
+        current_xcode_arch()?,
+        "Release",
+    )?;
     let asset_version = mlx_repo_revision(&mlx_repo_dir)?;
     let arch_dir = current_runtime_arch_dir()?;
     let remote_path = format!("mlx/{asset_version}/{arch_dir}/mlx.metallib");

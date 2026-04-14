@@ -1,0 +1,209 @@
+use color_eyre::{
+    Result,
+    eyre::{Context, eyre},
+};
+use duct::cmd;
+use symphonia::core::audio::SampleBuffer;
+use symphonia::core::codecs::DecoderOptions;
+use symphonia::core::errors::Error as SymphoniaError;
+use symphonia::core::formats::FormatOptions;
+use symphonia::core::io::MediaSourceStream;
+use symphonia::core::probe::Hint;
+
+use super::DecodedAudio;
+use crate::utils::{now_millis, short_hash};
+
+pub(super) fn decode_audio(path: &std::path::Path) -> Result<DecodedAudio> {
+    match decode_audio_with_symphonia(path) {
+        Ok(audio) => Ok(audio),
+        Err(SymphoniaError::Unsupported(_)) => decode_audio_with_ffmpeg(path),
+        Err(error) => Err(error.into()),
+    }
+}
+
+pub(crate) fn convert_media_to_wav(
+    media_path: &std::path::Path,
+    output_path: &std::path::Path,
+) -> Result<()> {
+    let input = media_path.display().to_string();
+    let output = output_path.display().to_string();
+    let result = cmd(
+        "ffmpeg",
+        [
+            "-y",
+            "-i",
+            input.as_str(),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-c:a",
+            "pcm_s16le",
+            output.as_str(),
+        ],
+    )
+    .stdout_null()
+    .stderr_capture()
+    .unchecked()
+    .run()
+    .with_context(|| format!("failed to launch ffmpeg for {}", media_path.display()))?;
+
+    if result.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    Err(eyre!(
+        "ffmpeg failed to normalize {}: {}",
+        media_path.display(),
+        stderr.trim()
+    ))
+}
+
+fn decode_audio_with_symphonia(
+    path: &std::path::Path,
+) -> std::result::Result<DecodedAudio, SymphoniaError> {
+    let file = std::fs::File::open(path).map_err(SymphoniaError::IoError)?;
+    let media_source_stream = MediaSourceStream::new(Box::new(file), Default::default());
+
+    let mut hint = Hint::new();
+    if let Some(extension) = path.extension().and_then(|value| value.to_str()) {
+        hint.with_extension(extension);
+    }
+
+    let probed = symphonia::default::get_probe().format(
+        &hint,
+        media_source_stream,
+        &FormatOptions::default(),
+        &Default::default(),
+    )?;
+    let mut format = probed.format;
+    let track = format
+        .default_track()
+        .ok_or(SymphoniaError::Unsupported("no default audio track found"))?;
+    let sample_rate = track
+        .codec_params
+        .sample_rate
+        .ok_or(SymphoniaError::Unsupported("missing sample rate"))?;
+    let track_id = track.id;
+    let mut decoder =
+        symphonia::default::get_codecs().make(&track.codec_params, &DecoderOptions::default())?;
+
+    let mut samples = Vec::new();
+    let mut sample_buffer = None;
+
+    loop {
+        let packet = match format.next_packet() {
+            Ok(packet) => packet,
+            Err(SymphoniaError::IoError(error))
+                if error.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                break;
+            }
+            Err(SymphoniaError::ResetRequired) => {
+                decoder.reset();
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+
+        if packet.track_id() != track_id {
+            continue;
+        }
+
+        let decoded = match decoder.decode(&packet) {
+            Ok(decoded) => decoded,
+            Err(SymphoniaError::DecodeError(_)) => continue,
+            Err(error) => return Err(error),
+        };
+
+        let spec = *decoded.spec();
+        let channels = spec.channels.count();
+        let required_capacity = decoded.capacity() as u64;
+        let buffer =
+            sample_buffer.get_or_insert_with(|| SampleBuffer::<f32>::new(required_capacity, spec));
+        if buffer.capacity() < decoded.capacity() {
+            *buffer = SampleBuffer::<f32>::new(required_capacity, spec);
+        }
+        buffer.copy_interleaved_ref(decoded);
+        let interleaved = buffer.samples();
+
+        if channels == 1 {
+            samples.extend_from_slice(interleaved);
+            continue;
+        }
+
+        for frame in interleaved.chunks(channels) {
+            let sum = frame.iter().copied().sum::<f32>();
+            samples.push(sum / channels as f32);
+        }
+    }
+
+    Ok(DecodedAudio {
+        sample_rate,
+        samples,
+    })
+}
+
+fn decode_audio_with_ffmpeg(path: &std::path::Path) -> Result<DecodedAudio> {
+    let temp_path = std::env::temp_dir().join(format!(
+        "smrze-{}-{}.wav",
+        short_hash(&path.display().to_string()),
+        now_millis()?
+    ));
+    convert_media_to_wav(path, &temp_path)?;
+
+    let wav = load_wav_file(&temp_path)
+        .with_context(|| format!("failed to read {}", temp_path.display()));
+
+    let cleanup_result = std::fs::remove_file(&temp_path);
+    if let Err(error) = cleanup_result
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        return Err(error).with_context(|| format!("failed to remove {}", temp_path.display()));
+    }
+
+    wav
+}
+
+fn load_wav_file(path: &std::path::Path) -> Result<DecodedAudio> {
+    let mut reader = hound::WavReader::open(path)
+        .with_context(|| format!("failed to open {}", path.display()))?;
+    let spec = reader.spec();
+    let sample_rate = spec.sample_rate;
+    let channels = usize::from(spec.channels.max(1));
+
+    let interleaved = match spec.sample_format {
+        hound::SampleFormat::Float => reader
+            .samples::<f32>()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .with_context(|| format!("failed to read {}", path.display()))?,
+        hound::SampleFormat::Int => match spec.bits_per_sample {
+            0..=16 => reader
+                .samples::<i16>()
+                .map(|sample| sample.map(|value| f32::from(value) / f32::from(i16::MAX)))
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .with_context(|| format!("failed to read {}", path.display()))?,
+            _ => reader
+                .samples::<i32>()
+                .map(|sample| sample.map(|value| value as f32 / i32::MAX as f32))
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .with_context(|| format!("failed to read {}", path.display()))?,
+        },
+    };
+
+    let samples = if channels == 1 {
+        interleaved
+    } else {
+        interleaved
+            .chunks(channels)
+            .map(|frame| frame.iter().copied().sum::<f32>() / channels as f32)
+            .collect()
+    };
+
+    Ok(DecodedAudio {
+        sample_rate,
+        samples,
+    })
+}

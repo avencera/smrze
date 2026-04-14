@@ -1,18 +1,22 @@
+mod raw_turn;
+mod segments;
+mod smoothing;
+
 use scriptrs::TimedToken;
 use serde::{Deserialize, Serialize};
-use speakrs::{
-    DiarizationResult,
-    pipeline::{FRAME_DURATION_SECONDS, FRAME_STEP_SECONDS},
-    segment::Segment,
-};
+use speakrs::{DiarizationResult, segment::Segment};
 use std::collections::HashMap;
 
-const MERGE_GAP_SECONDS: f64 = 0.75;
-const DEFAULT_RAW_SPEAKER: &str = "SPEAKER_00";
-const SHORT_INTRUSION_SECONDS: f64 = 1.5;
-const MINORITY_SPEAKER_RATIO: f64 = 0.12;
-const PREFERRED_SPLIT_SECONDS: f64 = 12.0;
-const HARD_SPLIT_SECONDS: f64 = 30.0;
+use raw_turn::RawTurn;
+use segments::{assign_speaker, exclusive_segments};
+use smoothing::smooth_speakers;
+
+pub(super) const MERGE_GAP_SECONDS: f64 = 0.75;
+pub(super) const DEFAULT_RAW_SPEAKER: &str = "SPEAKER_00";
+pub(super) const SHORT_INTRUSION_SECONDS: f64 = 1.5;
+pub(super) const MINORITY_SPEAKER_RATIO: f64 = 0.12;
+pub(super) const PREFERRED_SPLIT_SECONDS: f64 = 12.0;
+pub(super) const HARD_SPLIT_SECONDS: f64 = 30.0;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SpeakerTurn {
@@ -40,21 +44,18 @@ pub fn build_turns(tokens: &[TimedToken], diarization: &DiarizationResult) -> Ve
     let mut next_speaker_number = 1usize;
     raw_turns
         .into_iter()
-        .map(|turn| {
-            let display_name = display_names
+        .map(|turn| SpeakerTurn {
+            start: turn.start,
+            end: turn.end,
+            speaker: display_names
                 .entry(turn.speaker.clone())
                 .or_insert_with(|| {
                     let label = format!("Speaker {next_speaker_number}");
                     next_speaker_number += 1;
                     label
                 })
-                .clone();
-            SpeakerTurn {
-                start: turn.start,
-                end: turn.end,
-                speaker: display_name,
-                text: turn.text.trim().to_owned(),
-            }
+                .clone(),
+            text: turn.text.trim().to_owned(),
         })
         .collect()
 }
@@ -92,64 +93,6 @@ fn collect_raw_turns(tokens: &[TimedToken], segments: &[Segment]) -> Vec<RawTurn
     raw_turns
 }
 
-fn smooth_speakers(turns: &mut [RawTurn]) {
-    if turns.len() < 2 {
-        return;
-    }
-
-    smooth_short_intrusions(turns);
-    collapse_minority_speakers(turns);
-}
-
-fn smooth_short_intrusions(turns: &mut [RawTurn]) {
-    if turns.len() < 3 {
-        return;
-    }
-
-    for index in 1..turns.len() - 1 {
-        let previous = &turns[index - 1];
-        let next = &turns[index + 1];
-        let current = &turns[index];
-        if previous.speaker != next.speaker || current.speaker == previous.speaker {
-            continue;
-        }
-        if current.duration() > SHORT_INTRUSION_SECONDS {
-            continue;
-        }
-
-        turns[index].speaker = previous.speaker.clone();
-    }
-}
-
-fn collapse_minority_speakers(turns: &mut [RawTurn]) {
-    let mut durations = HashMap::<String, f64>::new();
-    let mut total_duration = 0.0f64;
-    for turn in turns.iter() {
-        let duration = turn.duration();
-        total_duration += duration;
-        *durations.entry(turn.speaker.clone()).or_default() += duration;
-    }
-
-    if durations.len() < 2 || total_duration <= 0.0 {
-        return;
-    }
-
-    let dominant = durations
-        .iter()
-        .max_by(|left, right| left.1.total_cmp(right.1))
-        .map(|(speaker, _)| speaker.clone());
-    let Some(dominant) = dominant else {
-        return;
-    };
-
-    for turn in turns.iter_mut() {
-        let ratio = durations.get(&turn.speaker).copied().unwrap_or_default() / total_duration;
-        if turn.speaker != dominant && ratio <= MINORITY_SPEAKER_RATIO {
-            turn.speaker = dominant.clone();
-        }
-    }
-}
-
 fn merge_raw_turns(turns: Vec<RawTurn>) -> Vec<RawTurn> {
     let mut merged: Vec<RawTurn> = Vec::new();
     for turn in turns {
@@ -166,98 +109,6 @@ fn merge_raw_turns(turns: Vec<RawTurn>) -> Vec<RawTurn> {
         }
     }
     merged
-}
-
-fn exclusive_segments(diarization: &DiarizationResult) -> Vec<Segment> {
-    let mut exclusive = diarization.discrete_diarization.clone();
-    exclusive.make_exclusive();
-    exclusive.to_segments(FRAME_STEP_SECONDS, FRAME_DURATION_SECONDS)
-}
-
-fn assign_speaker(token: &TimedToken, segments: &[Segment]) -> String {
-    if segments.is_empty() {
-        return DEFAULT_RAW_SPEAKER.to_owned();
-    }
-
-    let mut best_overlap = 0.0f64;
-    let mut best_speaker = None;
-    for segment in segments {
-        let overlap = overlap_seconds(token.start, token.end, segment.start, segment.end);
-        if overlap > best_overlap {
-            best_overlap = overlap;
-            best_speaker = Some(segment.speaker.clone());
-        }
-    }
-    if let Some(speaker) = best_speaker
-        && best_overlap > 0.0
-    {
-        return speaker;
-    }
-
-    let token_midpoint = (token.start + token.end) / 2.0;
-    segments
-        .iter()
-        .min_by(|left, right| {
-            distance_to_segment(token_midpoint, left)
-                .total_cmp(&distance_to_segment(token_midpoint, right))
-        })
-        .map(|segment| segment.speaker.clone())
-        .unwrap_or_else(|| DEFAULT_RAW_SPEAKER.to_owned())
-}
-
-fn overlap_seconds(start_a: f64, end_a: f64, start_b: f64, end_b: f64) -> f64 {
-    (end_a.min(end_b) - start_a.max(start_b)).max(0.0)
-}
-
-fn distance_to_segment(time: f64, segment: &Segment) -> f64 {
-    if (segment.start..=segment.end).contains(&time) {
-        return 0.0;
-    }
-    if time < segment.start {
-        return segment.start - time;
-    }
-    time - segment.end
-}
-
-#[derive(Debug, Clone)]
-struct RawTurn {
-    start: f64,
-    end: f64,
-    speaker: String,
-    text: String,
-    locked_from_previous: bool,
-    should_split_after: bool,
-}
-
-impl RawTurn {
-    fn new(token: &TimedToken, speaker: String, locked_from_previous: bool) -> Self {
-        let mut turn = Self {
-            start: token.start,
-            end: token.end,
-            speaker,
-            text: token.text.clone(),
-            locked_from_previous,
-            should_split_after: false,
-        };
-        turn.should_split_after =
-            turn.duration() >= PREFERRED_SPLIT_SECONDS && token_ends_sentence(token);
-        turn
-    }
-
-    fn append_token(&mut self, token: &TimedToken) {
-        self.end = token.end;
-        self.text.push_str(&token.text);
-        self.should_split_after =
-            self.duration() >= PREFERRED_SPLIT_SECONDS && token_ends_sentence(token);
-    }
-
-    fn duration(&self) -> f64 {
-        self.end - self.start
-    }
-}
-
-fn token_ends_sentence(token: &TimedToken) -> bool {
-    matches!(token.text.trim_end().chars().last(), Some('.' | '?' | '!'))
 }
 
 #[cfg(test)]
