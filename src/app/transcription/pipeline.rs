@@ -83,23 +83,35 @@ fn execute_transcription_pipeline(
     diarization_worker: DiarizationWorker,
     transcription_worker: TranscriptionWorker,
 ) -> Result<(String, Vec<SpeakerTurn>)> {
-    let diarization = match diarization_worker.run(Arc::clone(&normalized_audio)) {
-        Ok(diarization) => diarization,
+    let diarization_worker = diarization_worker.start(Arc::clone(&normalized_audio))?;
+    let transcription_worker = match transcription_worker.start(normalized_audio) {
+        Ok(worker) => worker,
         Err(error) => {
-            if let Err(cancel_error) = transcription_worker.cancel() {
+            if let Err(wait_error) = diarization_worker.wait() {
                 warn!(
-                    "Failed to stop transcription worker after diarization error: {cancel_error:#}"
+                    "Failed to clean up diarization worker after transcription start error: {wait_error:#}"
                 );
             }
             return Err(error);
         }
     };
+
+    let diarization = diarization_worker.wait();
+    let transcription = transcription_worker.wait();
+    let (diarization, transcription) = match (diarization, transcription) {
+        (Ok(diarization), Ok(transcription)) => (diarization, transcription),
+        (Err(error), Ok(_)) => return Err(error),
+        (Ok(_), Err(error)) => return Err(error),
+        (Err(error), Err(transcription_error)) => {
+            warn!("Transcription also failed: {transcription_error:#}");
+            return Err(error);
+        }
+    };
+
     debug!(
         "diarization produced {} segments",
         diarization.segments.len()
     );
-
-    let transcription = transcription_worker.run(normalized_audio)?;
     debug!(
         "transcription produced {} timed tokens",
         transcription.tokens.len()

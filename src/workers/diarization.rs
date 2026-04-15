@@ -7,7 +7,7 @@ use tracing::debug;
 use crate::console;
 use crate::models::{build_diarization_pipeline, ensure_diarization_models};
 
-use super::runner::{Worker, WorkerOutcome};
+use super::runner::{RunningWorker, Worker, WorkerOutcome};
 
 pub(crate) struct DiarizationWorker(Worker<DiarizationResult>);
 
@@ -46,7 +46,10 @@ impl DiarizationWorker {
         }))
     }
 
-    pub(crate) fn run(self, audio: std::sync::Arc<[f32]>) -> Result<DiarizationResult> {
-        self.0.run(audio)
+    pub(crate) fn start(
+        self,
+        audio: std::sync::Arc<[f32]>,
+    ) -> Result<RunningWorker<DiarizationResult>> {
+        self.0.start(audio)
     }
 }

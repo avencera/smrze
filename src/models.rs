@@ -11,7 +11,7 @@ use std::path::Path;
 use std::time::Instant;
 use tracing::debug;
 
-const DIARIZATION_EXECUTION_MODE: ExecutionMode = ExecutionMode::CoreMl;
+const DIARIZATION_EXECUTION_MODE: ExecutionMode = ExecutionMode::CoreMlFast;
 
 pub fn ensure_transcription_models(scriptrs_cache_dir: &Path) -> Result<TranscriptionModelBundle> {
     let transcription_started = Instant::now();

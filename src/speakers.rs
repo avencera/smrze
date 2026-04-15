@@ -1,6 +1,5 @@
 mod raw_turn;
 mod segments;
-mod smoothing;
 
 use scriptrs::TimedToken;
 use serde::{Deserialize, Serialize};
@@ -9,12 +8,9 @@ use std::collections::HashMap;
 
 use raw_turn::RawTurn;
 use segments::{assign_speaker, exclusive_segments};
-use smoothing::smooth_speakers;
 
 pub(super) const MERGE_GAP_SECONDS: f64 = 0.75;
 pub(super) const DEFAULT_RAW_SPEAKER: &str = "SPEAKER_00";
-pub(super) const SHORT_INTRUSION_SECONDS: f64 = 1.5;
-pub(super) const MINORITY_SPEAKER_RATIO: f64 = 0.12;
 pub(super) const PREFERRED_SPLIT_SECONDS: f64 = 12.0;
 pub(super) const HARD_SPLIT_SECONDS: f64 = 30.0;
 
@@ -33,7 +29,6 @@ pub fn build_turns(tokens: &[TimedToken], diarization: &DiarizationResult) -> Ve
 
     let segments = exclusive_segments(diarization);
     let mut raw_turns = collect_raw_turns(tokens, &segments);
-    smooth_speakers(&mut raw_turns);
     raw_turns = merge_raw_turns(raw_turns);
 
     if raw_turns.is_empty() {
@@ -170,7 +165,7 @@ mod tests {
     }
 
     #[test]
-    fn smooths_brief_speaker_intrusions() {
+    fn preserves_brief_speaker_intrusions() {
         let diarization = diarization_result(
             Array2::from_shape_vec(
                 (7, 2),
@@ -196,8 +191,10 @@ mod tests {
             ],
             &diarization,
         );
-        assert_eq!(turns.len(), 1);
+        assert_eq!(turns.len(), 3);
         assert_eq!(turns[0].speaker, "Speaker 1");
+        assert_eq!(turns[1].speaker, "Speaker 2");
+        assert_eq!(turns[2].speaker, "Speaker 1");
     }
 
     #[test]

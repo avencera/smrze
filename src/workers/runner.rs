@@ -19,6 +19,11 @@ pub(super) struct Worker<T> {
     join_handle: JoinHandle<Result<WorkerOutcome<T>>>,
 }
 
+pub(crate) struct RunningWorker<T> {
+    name: &'static str,
+    join_handle: JoinHandle<Result<WorkerOutcome<T>>>,
+}
+
 impl<T: Send + 'static> Worker<T> {
     pub(super) fn spawn<F>(name: &'static str, run: F) -> Self
     where
@@ -33,16 +38,16 @@ impl<T: Send + 'static> Worker<T> {
         }
     }
 
-    pub(super) fn run(self, audio: Arc<[f32]>) -> Result<T> {
+    pub(super) fn start(self, audio: Arc<[f32]>) -> Result<RunningWorker<T>> {
         let Worker {
             name,
             request_tx,
             join_handle,
         } = self;
         let send_result = request_tx.send(audio);
-        let worker_result = join_worker(name, join_handle)?;
 
         if send_result.is_err() {
+            let worker_result = join_worker(name, join_handle)?;
             return match worker_result {
                 WorkerOutcome::Completed(_) => Err(eyre!("{name} worker exited unexpectedly")),
                 WorkerOutcome::CancelledBeforeInput => {
@@ -51,22 +56,21 @@ impl<T: Send + 'static> Worker<T> {
             };
         }
 
+        Ok(RunningWorker { name, join_handle })
+    }
+}
+
+impl<T> RunningWorker<T> {
+    pub(crate) fn wait(self) -> Result<T> {
+        let RunningWorker { name, join_handle } = self;
+        let worker_result = join_worker(name, join_handle)?;
+
         match worker_result {
             WorkerOutcome::Completed(value) => Ok(value),
             WorkerOutcome::CancelledBeforeInput => {
                 Err(eyre!("{name} worker stopped without producing a result"))
             }
         }
-    }
-
-    pub(super) fn cancel(self) -> Result<()> {
-        let Worker {
-            name,
-            request_tx,
-            join_handle,
-        } = self;
-        drop(request_tx);
-        join_worker(name, join_handle).map(|_| ())
     }
 }
 
@@ -88,25 +92,15 @@ mod tests {
     use std::thread;
 
     #[test]
-    fn run_returns_worker_result() -> Result<()> {
+    fn start_then_wait_returns_worker_result() -> Result<()> {
         let worker = Worker::spawn("test", |request_rx| {
             let audio = request_rx.recv().expect("audio should be sent");
             Ok(WorkerOutcome::Completed(audio.len()))
         });
 
-        let result = worker.run(Arc::<[f32]>::from(vec![0.0_f32, 1.0, 2.0]))?;
+        let running = worker.start(Arc::<[f32]>::from(vec![0.0_f32, 1.0, 2.0]))?;
+        let result = running.wait()?;
         assert_eq!(result, 3);
-        Ok(())
-    }
-
-    #[test]
-    fn cancel_stops_worker_without_error() -> Result<()> {
-        let worker = Worker::<usize>::spawn("test", |request_rx| {
-            let _ = request_rx.recv();
-            Ok(WorkerOutcome::CancelledBeforeInput)
-        });
-
-        worker.cancel()?;
         Ok(())
     }
 

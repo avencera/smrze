@@ -7,7 +7,7 @@ use tracing::debug;
 use crate::console;
 use crate::models::{build_transcription_pipeline, ensure_transcription_models};
 
-use super::runner::{Worker, WorkerOutcome};
+use super::runner::{RunningWorker, Worker, WorkerOutcome};
 
 pub(crate) struct TranscriptionWorker(Worker<TranscriptionResult>);
 
@@ -39,11 +39,10 @@ impl TranscriptionWorker {
         }))
     }
 
-    pub(crate) fn run(self, audio: std::sync::Arc<[f32]>) -> Result<TranscriptionResult> {
-        self.0.run(audio)
-    }
-
-    pub(crate) fn cancel(self) -> Result<()> {
-        self.0.cancel()
+    pub(crate) fn start(
+        self,
+        audio: std::sync::Arc<[f32]>,
+    ) -> Result<RunningWorker<TranscriptionResult>> {
+        self.0.start(audio)
     }
 }
