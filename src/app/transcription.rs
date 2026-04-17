@@ -5,7 +5,7 @@ use color_eyre::Result;
 use tracing::debug;
 
 use crate::cache::CachedTranscript;
-use crate::cli::{TranscriptArgs, TranscriptFormat, TranscriptMode};
+use crate::cli::{TranscriptArgs, TranscriptFormat, TranscriptMode, TranscriptionMode};
 use crate::input::resolve_media_input;
 use crate::output::{commit_output, open_path, stage_named_output};
 use crate::paths::{AppPaths, RunPaths};
@@ -21,7 +21,7 @@ pub(super) fn run_transcript(
 ) -> Result<()> {
     debug!("Starting transcript command for {}", args.input);
     let resolved_input = resolve_media_input(&args.input)?;
-    let pipeline = TranscriptionPipeline::new(app_paths, force);
+    let pipeline = TranscriptionPipeline::new(app_paths, force, selected_transcription_mode(args));
     let transcript = pipeline.transcribe_resolved_input(&resolved_input)?;
     let output = render_transcript_output(selected_transcript_output(args), &transcript)?;
 
@@ -55,6 +55,10 @@ fn selected_transcript_output(args: &TranscriptArgs) -> SelectedTranscriptOutput
         TranscriptMode::Word => TranscriptFormat::Json,
     });
     SelectedTranscriptOutput { mode, format }
+}
+
+fn selected_transcription_mode(args: &TranscriptArgs) -> TranscriptionMode {
+    args.transcription_mode.unwrap_or(TranscriptionMode::Vad)
 }
 
 fn render_transcript_output(
@@ -98,9 +102,11 @@ struct RenderedTranscriptOutput {
 
 #[cfg(test)]
 mod tests {
-    use super::{render_transcript_output, selected_transcript_output};
+    use super::{
+        render_transcript_output, selected_transcript_output, selected_transcription_mode,
+    };
     use crate::cache::CachedTranscript;
-    use crate::cli::{Command, TranscriptFormat, TranscriptMode};
+    use crate::cli::{Command, TranscriptFormat, TranscriptMode, TranscriptionMode};
     use crate::speakers::SpeakerTurn;
     use crate::transcript::TranscriptToken;
     use clap::Parser;
@@ -131,6 +137,7 @@ mod tests {
         let Command::Transcript(args) = cli.command else {
             panic!("expected transcript command");
         };
+        assert_eq!(selected_transcription_mode(&args), TranscriptionMode::Vad);
         let selected = selected_transcript_output(&args);
         assert_eq!(selected.mode, TranscriptMode::Transcript);
         assert_eq!(selected.format, TranscriptFormat::Text);
@@ -142,9 +149,19 @@ mod tests {
         let Command::Transcript(args) = cli.command else {
             panic!("expected transcript command");
         };
+        assert_eq!(selected_transcription_mode(&args), TranscriptionMode::Vad);
         let selected = selected_transcript_output(&args);
         assert_eq!(selected.mode, TranscriptMode::Word);
         assert_eq!(selected.format, TranscriptFormat::Json);
+    }
+
+    #[test]
+    fn explicit_transcription_mode_wins() {
+        let cli = crate::Cli::parse_from(["smrze", "transcript", "input.wav", "-m", "fast"]);
+        let Command::Transcript(args) = cli.command else {
+            panic!("expected transcript command");
+        };
+        assert_eq!(selected_transcription_mode(&args), TranscriptionMode::Fast);
     }
 
     #[test]

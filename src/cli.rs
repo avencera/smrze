@@ -83,6 +83,9 @@ pub struct TranscriptArgs {
     /// Open the written transcript after it is created, requires --output
     #[arg(long)]
     pub open: bool,
+    /// Transcription mode used by the ASR pipeline
+    #[arg(short = 'm', long = "transcription-mode", value_enum)]
+    pub transcription_mode: Option<TranscriptionMode>,
     /// Transcript output mode
     #[arg(long, value_enum)]
     pub mode: Option<TranscriptMode>,
@@ -107,6 +110,22 @@ pub enum TranscriptFormat {
     Json,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub enum TranscriptionMode {
+    Fast,
+    Vad,
+}
+
+impl TranscriptionMode {
+    pub const fn cache_key(self) -> &'static str {
+        match self {
+            Self::Fast => "fast",
+            Self::Vad => "vad",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Args)]
 pub struct SummarizeArgs {
     /// Local transcript or media file, or a remote media URL
@@ -127,7 +146,7 @@ pub struct SummarizeArgs {
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, Command, TranscriptFormat, TranscriptMode};
+    use super::{Cli, Command, TranscriptFormat, TranscriptMode, TranscriptionMode};
     use clap::{CommandFactory, Parser};
 
     #[test]
@@ -173,6 +192,8 @@ mod tests {
             "smrze",
             "transcript",
             "input.wav",
+            "-m",
+            "fast",
             "--mode",
             "word",
             "--format",
@@ -181,6 +202,7 @@ mod tests {
         let Command::Transcript(args) = cli.command else {
             panic!("expected transcript command");
         };
+        assert_eq!(args.transcription_mode, Some(TranscriptionMode::Fast));
         assert_eq!(args.mode, Some(TranscriptMode::Word));
         assert_eq!(args.format, Some(TranscriptFormat::Json));
     }
@@ -192,5 +214,14 @@ mod tests {
             panic!("expected transcript command");
         };
         assert_eq!(args.mode, Some(TranscriptMode::Word));
+    }
+
+    #[test]
+    fn transcription_mode_short_flag_parses() {
+        let cli = Cli::parse_from(["smrze", "transcript", "input.wav", "-m", "vad"]);
+        let Command::Transcript(args) = cli.command else {
+            panic!("expected transcript command");
+        };
+        assert_eq!(args.transcription_mode, Some(TranscriptionMode::Vad));
     }
 }

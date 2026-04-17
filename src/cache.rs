@@ -10,6 +10,7 @@ pub use summary::{SummaryCacheEntry, load_cached_summary, store_summary, summary
 pub use sweeper::spawn_cache_sweeper;
 pub use transcript::{
     CachedTranscript, TranscriptCacheEntry, load_cached_transcript, store_transcript,
+    transcript_cache_key,
 };
 
 pub(crate) use audio::AUDIO_CACHE_SPEC;

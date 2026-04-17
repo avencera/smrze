@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use super::transcription::TranscriptionPipeline;
 use crate::cli::SummarizeArgs;
+use crate::cli::TranscriptionMode;
 use crate::output::{commit_summary, open_path, stage_summary};
 use crate::paths::{AppPaths, RunPaths};
 use crate::summary::SummaryMode;
@@ -20,7 +21,7 @@ pub(super) fn run_summarize(
     args: &SummarizeArgs,
     run_paths: Option<&RunPaths>,
 ) -> Result<()> {
-    let transcription = TranscriptionPipeline::new(app_paths, force);
+    let transcription = TranscriptionPipeline::new(app_paths, force, TranscriptionMode::Vad);
     let summary_input = SummaryInputResolver::new(&transcription).resolve(&args.input)?;
     let summary_mode = selected_summary_mode(args);
     let summary_model_dir = resolve_summary_model_dir(args.summary_model_dir.as_deref())?;
@@ -61,6 +62,7 @@ fn resolve_summary_model_dir(summary_model_dir: Option<&Path>) -> Result<Option<
 #[cfg(test)]
 mod tests {
     use super::{SummaryInputResolver, selected_summary_mode};
+    use crate::cli::TranscriptionMode;
     use crate::paths::AppPaths;
     use crate::summary::SummaryMode;
     use clap::Parser;
@@ -114,7 +116,7 @@ mod tests {
         )?;
 
         let app_paths = test_paths("smrze-summary-structured-transcript-cache");
-        let transcription = TranscriptionPipeline::new(&app_paths, false);
+        let transcription = TranscriptionPipeline::new(&app_paths, false, TranscriptionMode::Vad);
         let resolver = SummaryInputResolver::new(&transcription);
         let summary_input = resolver.resolve(transcript_path.to_str().expect("valid path"))?;
 
@@ -136,7 +138,7 @@ mod tests {
         fs::write(&transcript_path, "first line\n\nsecond line")?;
 
         let app_paths = test_paths("smrze-summary-plain-transcript-cache");
-        let transcription = TranscriptionPipeline::new(&app_paths, false);
+        let transcription = TranscriptionPipeline::new(&app_paths, false, TranscriptionMode::Vad);
         let resolver = SummaryInputResolver::new(&transcription);
         let summary_input = resolver.resolve(transcript_path.to_str().expect("valid path"))?;
 

@@ -5,7 +5,9 @@ use tracing::{debug, warn};
 use super::audio::{AudioMaterializer, load_normalized_audio};
 use crate::cache::{
     CachedTranscript, TranscriptCacheEntry, load_cached_transcript, store_transcript,
+    transcript_cache_key,
 };
+use crate::cli::TranscriptionMode;
 use crate::input::ResolvedMediaInput;
 use crate::paths::AppPaths;
 use crate::speakers::{SpeakerTurn, build_turns};
@@ -16,23 +18,36 @@ use crate::workers::{DiarizationWorker, TranscriptionWorker};
 pub(crate) struct TranscriptionPipeline<'a> {
     app_paths: &'a AppPaths,
     force: bool,
+    transcription_mode: TranscriptionMode,
 }
 
 impl<'a> TranscriptionPipeline<'a> {
-    pub(crate) fn new(app_paths: &'a AppPaths, force: bool) -> Self {
-        Self { app_paths, force }
+    pub(crate) fn new(
+        app_paths: &'a AppPaths,
+        force: bool,
+        transcription_mode: TranscriptionMode,
+    ) -> Self {
+        Self {
+            app_paths,
+            force,
+            transcription_mode,
+        }
     }
 
     pub(crate) fn transcribe_resolved_input(
         &self,
         resolved_input: &ResolvedMediaInput,
     ) -> Result<CachedTranscript> {
+        let cache_key = transcript_cache_key(
+            &resolved_input.source_key,
+            self.transcription_mode.cache_key(),
+        );
         debug!(
             "Checking transcript cache for source key {}",
             resolved_input.source_key
         );
         if let Some(cached_transcript) =
-            load_cached_transcript(self.app_paths, &resolved_input.source_key, self.force)?
+            load_cached_transcript(self.app_paths, &cache_key, self.force)?
         {
             debug!(
                 "Transcript cache hit for source key {}",
@@ -49,10 +64,11 @@ impl<'a> TranscriptionPipeline<'a> {
             AudioMaterializer::new(self.app_paths, self.force).materialize(resolved_input)?;
         let normalized_audio = load_normalized_audio(&cached_audio.audio_path)?;
         let (transcript, turns, tokens) =
-            build_transcript_from_audio(self.app_paths, normalized_audio)?;
+            build_transcript_from_audio(self.app_paths, normalized_audio, self.transcription_mode)?;
         store_transcript(
             self.app_paths,
             TranscriptCacheEntry {
+                cache_key: &cache_key,
                 source_key: &resolved_input.source_key,
                 display_name: &cached_audio.display_name,
                 transcript: &transcript,
@@ -75,9 +91,11 @@ impl<'a> TranscriptionPipeline<'a> {
 fn build_transcript_from_audio(
     app_paths: &AppPaths,
     normalized_audio: Arc<[f32]>,
+    transcription_mode: TranscriptionMode,
 ) -> Result<(String, Vec<SpeakerTurn>, Vec<TranscriptToken>)> {
     let diarization_worker = DiarizationWorker::spawn(app_paths.speakrs_model_cache());
-    let transcription_worker = TranscriptionWorker::spawn(app_paths.scriptrs_model_cache());
+    let transcription_worker =
+        TranscriptionWorker::spawn(app_paths.scriptrs_model_cache(), transcription_mode);
     execute_transcription_pipeline(normalized_audio, diarization_worker, transcription_worker)
 }
 
