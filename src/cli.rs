@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand, builder::Styles};
+use clap::{Args, Parser, Subcommand, ValueEnum, builder::Styles};
 
 use crate::summary_backend::SummaryBackend;
 
@@ -83,6 +83,28 @@ pub struct TranscriptArgs {
     /// Open the written transcript after it is created, requires --output
     #[arg(long)]
     pub open: bool,
+    /// Transcript output mode
+    #[arg(long, value_enum)]
+    pub mode: Option<TranscriptMode>,
+    /// Transcript output format
+    #[arg(long, value_enum)]
+    pub format: Option<TranscriptFormat>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub enum TranscriptMode {
+    #[value(alias = "turns")]
+    Transcript,
+    #[value(alias = "words")]
+    Word,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub enum TranscriptFormat {
+    Text,
+    Json,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -105,7 +127,7 @@ pub struct SummarizeArgs {
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, Command};
+    use super::{Cli, Command, TranscriptFormat, TranscriptMode};
     use clap::{CommandFactory, Parser};
 
     #[test]
@@ -143,5 +165,32 @@ mod tests {
         assert!(help.contains("[aliases: t, trans]"));
         assert!(help.contains("summarize"));
         assert!(help.contains("[aliases: s, sum]"));
+    }
+
+    #[test]
+    fn transcript_mode_and_format_parse() {
+        let cli = Cli::parse_from([
+            "smrze",
+            "transcript",
+            "input.wav",
+            "--mode",
+            "word",
+            "--format",
+            "json",
+        ]);
+        let Command::Transcript(args) = cli.command else {
+            panic!("expected transcript command");
+        };
+        assert_eq!(args.mode, Some(TranscriptMode::Word));
+        assert_eq!(args.format, Some(TranscriptFormat::Json));
+    }
+
+    #[test]
+    fn transcript_mode_aliases_parse() {
+        let cli = Cli::parse_from(["smrze", "transcript", "input.wav", "--mode", "words"]);
+        let Command::Transcript(args) = cli.command else {
+            panic!("expected transcript command");
+        };
+        assert_eq!(args.mode, Some(TranscriptMode::Word));
     }
 }

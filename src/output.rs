@@ -6,20 +6,20 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub fn stage_transcript(scratch_dir: &Path, transcript: &str) -> Result<PathBuf> {
-    stage_text_file(scratch_dir, "transcript.txt", transcript)
+pub fn stage_named_output(scratch_dir: &Path, file_name: &str, content: &str) -> Result<PathBuf> {
+    stage_text_file(scratch_dir, file_name, content)
+}
+
+pub fn commit_output(staged_path: &Path, final_path: &Path) -> Result<()> {
+    commit_file(staged_path, final_path)
 }
 
 pub fn stage_summary(scratch_dir: &Path, summary: &str) -> Result<PathBuf> {
-    stage_text_file(scratch_dir, "summary.md", summary)
+    stage_named_output(scratch_dir, "summary.md", summary)
 }
 
 pub fn commit_summary(staged_path: &Path, final_path: &Path) -> Result<()> {
-    commit_file(staged_path, final_path)
-}
-
-pub fn commit_transcript(staged_path: &Path, final_path: &Path) -> Result<()> {
-    commit_file(staged_path, final_path)
+    commit_output(staged_path, final_path)
 }
 
 fn stage_text_file(scratch_dir: &Path, file_name: &str, content: &str) -> Result<PathBuf> {

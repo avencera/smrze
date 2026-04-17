@@ -9,7 +9,7 @@ use crate::cache::{
 use crate::input::ResolvedMediaInput;
 use crate::paths::AppPaths;
 use crate::speakers::{SpeakerTurn, build_turns};
-use crate::transcript::render_transcript;
+use crate::transcript::{TranscriptToken, render_transcript};
 use crate::utils::hash_string;
 use crate::workers::{DiarizationWorker, TranscriptionWorker};
 
@@ -48,7 +48,8 @@ impl<'a> TranscriptionPipeline<'a> {
         let cached_audio =
             AudioMaterializer::new(self.app_paths, self.force).materialize(resolved_input)?;
         let normalized_audio = load_normalized_audio(&cached_audio.audio_path)?;
-        let (transcript, turns) = build_transcript_from_audio(self.app_paths, normalized_audio)?;
+        let (transcript, turns, tokens) =
+            build_transcript_from_audio(self.app_paths, normalized_audio)?;
         store_transcript(
             self.app_paths,
             TranscriptCacheEntry {
@@ -56,6 +57,7 @@ impl<'a> TranscriptionPipeline<'a> {
                 display_name: &cached_audio.display_name,
                 transcript: &transcript,
                 turns: &turns,
+                tokens: &tokens,
             },
         )?;
 
@@ -65,6 +67,7 @@ impl<'a> TranscriptionPipeline<'a> {
             transcript_hash: hash_string(&transcript),
             transcript,
             turns,
+            tokens,
         })
     }
 }
@@ -72,7 +75,7 @@ impl<'a> TranscriptionPipeline<'a> {
 fn build_transcript_from_audio(
     app_paths: &AppPaths,
     normalized_audio: Arc<[f32]>,
-) -> Result<(String, Vec<SpeakerTurn>)> {
+) -> Result<(String, Vec<SpeakerTurn>, Vec<TranscriptToken>)> {
     let diarization_worker = DiarizationWorker::spawn(app_paths.speakrs_model_cache());
     let transcription_worker = TranscriptionWorker::spawn(app_paths.scriptrs_model_cache());
     execute_transcription_pipeline(normalized_audio, diarization_worker, transcription_worker)
@@ -82,7 +85,7 @@ fn execute_transcription_pipeline(
     normalized_audio: Arc<[f32]>,
     diarization_worker: DiarizationWorker,
     transcription_worker: TranscriptionWorker,
-) -> Result<(String, Vec<SpeakerTurn>)> {
+) -> Result<(String, Vec<SpeakerTurn>, Vec<TranscriptToken>)> {
     let diarization_worker = diarization_worker.start(Arc::clone(&normalized_audio))?;
     let transcription_worker = match transcription_worker.start(normalized_audio) {
         Ok(worker) => worker,
@@ -118,5 +121,10 @@ fn execute_transcription_pipeline(
     );
 
     let turns = build_turns(&transcription.tokens, &diarization);
-    Ok((render_transcript(&turns), turns))
+    let tokens = transcription
+        .tokens
+        .iter()
+        .map(TranscriptToken::from)
+        .collect();
+    Ok((render_transcript(&turns), turns, tokens))
 }

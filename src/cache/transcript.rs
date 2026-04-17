@@ -4,6 +4,7 @@ use std::fs;
 
 use crate::paths::AppPaths;
 use crate::speakers::SpeakerTurn;
+use crate::transcript::TranscriptToken;
 use crate::utils::{hash_string, now_millis_u64};
 
 use super::access::load_cache_entry;
@@ -24,6 +25,7 @@ pub struct CachedTranscript {
     pub transcript_hash: String,
     pub transcript: String,
     pub turns: Vec<SpeakerTurn>,
+    pub tokens: Vec<TranscriptToken>,
 }
 
 #[derive(Debug, Clone)]
@@ -32,6 +34,7 @@ pub struct TranscriptCacheEntry<'a> {
     pub display_name: &'a str,
     pub transcript: &'a str,
     pub turns: &'a [SpeakerTurn],
+    pub tokens: &'a [TranscriptToken],
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -42,6 +45,8 @@ struct TranscriptManifest {
     transcript_hash: String,
     transcript_file_name: String,
     turns_file_name: String,
+    #[serde(default)]
+    tokens_file_name: String,
 }
 
 pub(crate) fn load_transcript(
@@ -66,7 +71,16 @@ pub(crate) fn load_transcript(
         source_key,
         &manifest.turns_file_name,
     );
-    if !transcript_path.exists() || !turns_path.exists() {
+    if manifest.tokens_file_name.is_empty() {
+        return Ok(None);
+    }
+    let tokens_path = cache_file_path(
+        app_paths,
+        &TRANSCRIPT_CACHE_SPEC,
+        source_key,
+        &manifest.tokens_file_name,
+    );
+    if !transcript_path.exists() || !turns_path.exists() || !tokens_path.exists() {
         return Ok(None);
     }
 
@@ -77,6 +91,11 @@ pub(crate) fn load_transcript(
             .with_context(|| format!("failed to open {}", turns_path.display()))?,
     )
     .with_context(|| format!("failed to parse {}", turns_path.display()))?;
+    let tokens = serde_json::from_reader(
+        fs::File::open(&tokens_path)
+            .with_context(|| format!("failed to open {}", tokens_path.display()))?,
+    )
+    .with_context(|| format!("failed to parse {}", tokens_path.display()))?;
 
     Ok(Some(CachedTranscript {
         display_name: manifest.display_name,
@@ -84,6 +103,7 @@ pub(crate) fn load_transcript(
         transcript_hash: manifest.transcript_hash,
         transcript,
         turns,
+        tokens,
     }))
 }
 
@@ -105,8 +125,10 @@ pub fn store_transcript(app_paths: &AppPaths, entry: TranscriptCacheEntry<'_>) -
     let entry_dir = ensure_cache_entry_dir(app_paths, &TRANSCRIPT_CACHE_SPEC, entry.source_key)?;
     let transcript_path = entry_dir.join("transcript.txt");
     let turns_path = entry_dir.join("turns.json");
+    let tokens_path = entry_dir.join("tokens.json");
     write_text_file(&transcript_path, entry.transcript)?;
     write_json_file(&turns_path, &entry.turns)?;
+    write_json_file(&tokens_path, &entry.tokens)?;
     write_manifest(
         &entry_dir.join(MANIFEST_FILE_NAME),
         &TranscriptManifest {
@@ -116,6 +138,7 @@ pub fn store_transcript(app_paths: &AppPaths, entry: TranscriptCacheEntry<'_>) -
             transcript_hash: hash_string(entry.transcript),
             transcript_file_name: "transcript.txt".to_owned(),
             turns_file_name: "turns.json".to_owned(),
+            tokens_file_name: "tokens.json".to_owned(),
         },
     )?;
     Ok(())
@@ -127,6 +150,7 @@ mod tests {
     use crate::cache::{MANIFEST_FILE_NAME, cache_entry_dir};
     use crate::paths::AppPaths;
     use crate::speakers::SpeakerTurn;
+    use crate::transcript::TranscriptToken;
     use color_eyre::Result;
     use serde_json::Value;
     use std::fs;
@@ -146,6 +170,11 @@ mod tests {
             speaker: "Speaker 1".to_owned(),
             text: "Hello".to_owned(),
         }];
+        let tokens = vec![TranscriptToken {
+            text: " hello".to_owned(),
+            start: 1.0,
+            end: 1.2,
+        }];
         store_transcript(
             &app_paths,
             TranscriptCacheEntry {
@@ -153,6 +182,7 @@ mod tests {
                 display_name: "meeting",
                 transcript: "[00:00:01.000-00:00:02.000] Speaker 1: Hello",
                 turns: &turns,
+                tokens: &tokens,
             },
         )?;
 
@@ -161,6 +191,7 @@ mod tests {
         assert_eq!(cached_transcript.display_name, "meeting");
         assert_eq!(cached_transcript.source_key, "source-key");
         assert_eq!(cached_transcript.turns, turns);
+        assert_eq!(cached_transcript.tokens, tokens);
 
         let manifest_path = cache_entry_dir(
             &app_paths,
@@ -173,6 +204,7 @@ mod tests {
         assert_eq!(manifest["display_name"], "meeting");
         assert_eq!(manifest["transcript_file_name"], "transcript.txt");
         assert_eq!(manifest["turns_file_name"], "turns.json");
+        assert_eq!(manifest["tokens_file_name"], "tokens.json");
         assert!(manifest["transcript_hash"].as_str().is_some());
 
         let _ = fs::remove_dir_all(&app_paths.cache_dir);
