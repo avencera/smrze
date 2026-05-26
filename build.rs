@@ -1,6 +1,6 @@
 use smrze_build_support::{
     Result, blake3_file, build_mlx_metallib, cargo_profile_dir, developer_dir,
-    ensure_local_mlx_repo, ensure_metal_toolchain, mlx_device_cpp_path, mlx_repo_revision,
+    ensure_metal_toolchain, ensure_mlx_swift_checkout, mlx_device_cpp_path, mlx_repo_revision,
     mlx_xcode_project_path, run_checked_command, swift_triple_dir_for_target,
     xcode_arch_for_target,
 };
@@ -30,7 +30,6 @@ struct BuildContext {
     out_dir: PathBuf,
     target_arch: String,
     release_build: bool,
-    local_mlx_repo_dir: PathBuf,
 }
 
 impl BuildContext {
@@ -38,10 +37,6 @@ impl BuildContext {
         let manifest_dir = required_env_path("CARGO_MANIFEST_DIR");
         let out_dir = required_env_path("OUT_DIR");
         let target_arch = required_env("CARGO_CFG_TARGET_ARCH");
-        let local_mlx_repo_dir = manifest_dir
-            .parent()
-            .expect("smrze manifest dir should have a parent")
-            .join("mlx-swift");
         let release_build = std::env::var("PROFILE").as_deref() == Ok("release");
 
         Ok(Self {
@@ -49,7 +44,6 @@ impl BuildContext {
             out_dir,
             target_arch,
             release_build,
-            local_mlx_repo_dir,
         })
     }
 
@@ -70,30 +64,30 @@ impl BuildContext {
     }
 
     fn run(&self) -> Result<()> {
-        self.register_local_mlx_inputs();
-        self.ensure_local_mlx_repo()?;
-
         self.generate_swift_bridge();
         self.compile_swift_library()?;
-        let metallib_path = self.compile_mlx_metallib()?;
+        let mlx_swift_checkout_dir = self.mlx_swift_checkout_dir();
+        self.register_mlx_swift_inputs(&mlx_swift_checkout_dir);
+        self.ensure_mlx_swift_checkout(&mlx_swift_checkout_dir)?;
+        let metallib_path = self.compile_mlx_metallib(&mlx_swift_checkout_dir)?;
         copy_file(
             &metallib_path,
             &self.cargo_profile_dir()?.join("mlx.metallib"),
         )?;
-        self.export_mlx_runtime_metadata(&metallib_path)?;
+        self.export_mlx_runtime_metadata(&metallib_path, &mlx_swift_checkout_dir)?;
         self.link_swift_library()?;
         Ok(())
     }
 
-    fn register_local_mlx_inputs(&self) {
+    fn register_mlx_swift_inputs(&self, mlx_swift_checkout_dir: &Path) {
         for path in [
-            self.local_mlx_repo_dir.join("Package.swift"),
-            mlx_xcode_project_path(&self.local_mlx_repo_dir),
-            self.local_mlx_repo_dir
+            mlx_swift_checkout_dir.join("Package.swift"),
+            mlx_xcode_project_path(mlx_swift_checkout_dir),
+            mlx_swift_checkout_dir
                 .join("xcode")
                 .join("xcconfig")
                 .join("Cmlx.xcconfig"),
-            mlx_device_cpp_path(&self.local_mlx_repo_dir),
+            mlx_device_cpp_path(mlx_swift_checkout_dir),
         ] {
             if path.exists() {
                 println!("cargo:rerun-if-changed={}", path.display());
@@ -101,8 +95,8 @@ impl BuildContext {
         }
     }
 
-    fn ensure_local_mlx_repo(&self) -> Result<()> {
-        ensure_local_mlx_repo(&self.local_mlx_repo_dir)
+    fn ensure_mlx_swift_checkout(&self, mlx_swift_checkout_dir: &Path) -> Result<()> {
+        ensure_mlx_swift_checkout(mlx_swift_checkout_dir)
     }
 
     fn generate_swift_bridge(&self) {
@@ -136,20 +130,24 @@ impl BuildContext {
         Ok(())
     }
 
-    fn compile_mlx_metallib(&self) -> Result<PathBuf> {
+    fn compile_mlx_metallib(&self, mlx_swift_checkout_dir: &Path) -> Result<PathBuf> {
         self.ensure_metal_toolchain()?;
         build_mlx_metallib(
-            &self.local_mlx_repo_dir,
+            mlx_swift_checkout_dir,
             &self.mlx_derived_data_dir(),
             self.current_xcode_arch()?,
             self.xcode_build_configuration(),
         )
     }
 
-    fn export_mlx_runtime_metadata(&self, metallib_path: &Path) -> Result<()> {
+    fn export_mlx_runtime_metadata(
+        &self,
+        metallib_path: &Path,
+        mlx_swift_checkout_dir: &Path,
+    ) -> Result<()> {
         println!(
             "cargo:rustc-env=SMRZE_MLX_RUNTIME_ASSET_VERSION={}",
-            self.mlx_repo_revision()?
+            self.mlx_repo_revision(mlx_swift_checkout_dir)?
         );
         println!(
             "cargo:rustc-env=SMRZE_MLX_RUNTIME_ASSET_BLAKE3={}",
@@ -207,6 +205,13 @@ impl BuildContext {
             .join("mlx-derived-data")
     }
 
+    fn mlx_swift_checkout_dir(&self) -> PathBuf {
+        self.apple_foundation_models_dir()
+            .join(".build")
+            .join("checkouts")
+            .join("mlx-swift")
+    }
+
     fn swift_library_dir(&self) -> Result<PathBuf> {
         let build_mode = if self.release_build {
             "release"
@@ -236,8 +241,8 @@ impl BuildContext {
         }
     }
 
-    fn mlx_repo_revision(&self) -> Result<String> {
-        mlx_repo_revision(&self.local_mlx_repo_dir)
+    fn mlx_repo_revision(&self, mlx_swift_checkout_dir: &Path) -> Result<String> {
+        mlx_repo_revision(mlx_swift_checkout_dir)
     }
 }
 

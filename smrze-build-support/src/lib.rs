@@ -9,7 +9,7 @@ pub use command::{developer_dir, run_checked_command};
 pub use error::{BuildSupportError, Result};
 pub use hash::blake3_file;
 pub use mlx::{
-    build_mlx_metallib, ensure_local_mlx_repo, ensure_metal_toolchain, mlx_device_cpp_path,
+    build_mlx_metallib, ensure_metal_toolchain, ensure_mlx_swift_checkout, mlx_device_cpp_path,
     mlx_repo_revision, mlx_xcode_project_path,
 };
 pub use paths::{
@@ -21,7 +21,7 @@ pub use search::find_file_named;
 #[cfg(test)]
 mod tests {
     use super::{
-        blake3_file, cargo_profile_dir, ensure_local_mlx_repo, find_file_named,
+        blake3_file, cargo_profile_dir, ensure_mlx_swift_checkout, find_file_named,
         mlx_device_cpp_path, swift_triple_dir_for_target, xcode_arch_for_target,
     };
     use std::fs;
@@ -64,15 +64,11 @@ mod tests {
     }
 
     #[test]
-    fn ensure_local_mlx_repo_requires_submodule_checkout() {
+    fn ensure_mlx_swift_checkout_requires_cmlx_sources() {
         let root = temp_dir("mlx-checkout");
         fs::create_dir_all(&root).unwrap();
-        let error = ensure_local_mlx_repo(&root).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("submodule update --init --recursive")
-        );
+        let error = ensure_mlx_swift_checkout(&root).unwrap_err();
+        assert!(error.to_string().contains("expected Cmlx sources"));
         let _ = fs::remove_dir_all(&root);
     }
 

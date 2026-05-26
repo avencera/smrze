@@ -15,7 +15,7 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(path: "../../mlx-swift"),
+        .package(url: "https://github.com/ml-explore/mlx-swift.git", branch: "main"),
         .package(url: "https://github.com/ml-explore/mlx-swift-lm.git", branch: "main"),
         .package(url: "https://github.com/huggingface/swift-transformers.git", branch: "main"),
         .package(url: "https://github.com/DePasqualeOrg/swift-hf-api.git", from: "0.2.2"),

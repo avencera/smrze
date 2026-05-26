@@ -5,19 +5,17 @@ use crate::command::{command_output, run_checked_command};
 use crate::error::{BuildSupportError, Result};
 use crate::search::find_file_named;
 
-pub fn ensure_local_mlx_repo(repo_dir: &Path) -> Result<()> {
+pub fn ensure_mlx_swift_checkout(repo_dir: &Path) -> Result<()> {
     if !repo_dir.exists() {
         return Err(BuildSupportError::new(format!(
-            "expected a local mlx-swift checkout at {}\nclone it with: git clone https://github.com/ml-explore/mlx-swift.git {}",
-            repo_dir.display(),
+            "SwiftPM did not fetch mlx-swift at {}\nrun: xcrun swift package resolve --package-path apple-foundation-models",
             repo_dir.display()
         )));
     }
 
     if !mlx_device_cpp_path(repo_dir).exists() {
         return Err(BuildSupportError::new(format!(
-            "expected mlx-swift submodules to be initialized under {}\nrun: git -C {} submodule update --init --recursive",
-            repo_dir.display(),
+            "SwiftPM fetched mlx-swift at {}, but it does not contain the expected Cmlx sources",
             repo_dir.display()
         )));
     }
@@ -92,5 +90,5 @@ pub fn mlx_repo_revision(repo_dir: &Path) -> Result<String> {
     let output = run_checked_command(&mut command, "git rev-parse HEAD for mlx-swift")?;
     String::from_utf8(output.stdout)
         .map(|output| output.trim().to_owned())
-        .map_err(|_| BuildSupportError::new("local mlx-swift revision should be utf-8"))
+        .map_err(|_| BuildSupportError::new("mlx-swift revision should be utf-8"))
 }

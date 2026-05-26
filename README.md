@@ -80,14 +80,12 @@ Use `--open` with `--output` to open the written file after creation.
 - `ffmpeg` for media conversion and audio fallback decoding
 - `yt-dlp` for remote URL inputs
 - macOS with Xcode for Apple Foundation Models and MLX-backed summaries
-- a sibling `../mlx-swift` checkout with submodules initialized for macOS builds
+- SwiftPM network access on the first macOS build so it can fetch `mlx-swift`
 - Metal Toolchain for MLX Gemma support
 
-The current macOS build expects `mlx-swift` next to this repository:
+Install the Metal Toolchain before using MLX-backed Gemma summaries:
 
 ```sh
-git clone https://github.com/ml-explore/mlx-swift.git ../mlx-swift
-git -C ../mlx-swift submodule update --init --recursive
 xcodebuild -downloadComponent MetalToolchain
 ```
 
@@ -104,4 +102,3 @@ just fmt
 just clippy
 just test
 ```
-
