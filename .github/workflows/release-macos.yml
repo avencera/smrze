@@ -1,0 +1,62 @@
+name: Release macOS Apple Silicon
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BIN: smrze
+  TARGET: aarch64-apple-darwin
+
+jobs:
+  build:
+    name: Build macOS Apple Silicon binary
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust target
+        run: rustup target add ${{ env.TARGET }}
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            apple-foundation-models/.build
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles('**/Cargo.lock', 'apple-foundation-models/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cargo-
+
+      - name: Install Metal Toolchain
+        run: |
+          if ! xcrun metal -v >/dev/null 2>&1; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+
+      - name: Build
+        run: cargo build --locked --release --target ${{ env.TARGET }}
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          tar -czf "dist/${BIN}-${GITHUB_REF_NAME}-${TARGET}.tar.gz" \
+            --directory="target/${TARGET}/release" \
+            "${BIN}"
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ env.BIN }}-${{ github.ref_name }}-${{ env.TARGET }}.tar.gz
