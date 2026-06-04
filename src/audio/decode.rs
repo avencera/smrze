@@ -3,12 +3,12 @@ use color_eyre::{
     eyre::{Context, eyre},
 };
 use duct::cmd;
-use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::DecoderOptions;
+use symphonia::core::codecs::audio::AudioDecoderOptions;
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::formats::FormatOptions;
+use symphonia::core::formats::probe::Hint;
 use symphonia::core::io::MediaSourceStream;
-use symphonia::core::probe::Hint;
+use symphonia::core::meta::MetadataOptions;
 
 use super::DecodedAudio;
 use crate::utils::{now_millis, short_hash};
@@ -72,13 +72,12 @@ fn decode_audio_with_symphonia(
         hint.with_extension(extension);
     }
 
-    let probed = symphonia::default::get_probe().format(
+    let mut format = symphonia::default::get_probe().probe(
         &hint,
         media_source_stream,
-        &FormatOptions::default(),
-        &Default::default(),
+        FormatOptions::default(),
+        MetadataOptions::default(),
     )?;
-    let mut format = probed.format;
     let track = format
         .default_track()
         .ok_or(SymphoniaError::Unsupported("no default audio track found"))?;
@@ -87,11 +86,11 @@ fn decode_audio_with_symphonia(
         .sample_rate
         .ok_or(SymphoniaError::Unsupported("missing sample rate"))?;
     let track_id = track.id;
-    let mut decoder =
-        symphonia::default::get_codecs().make(&track.codec_params, &DecoderOptions::default())?;
+    let mut decoder = symphonia::default::get_codecs()
+        .make_audio_decoder(&track.codec_params, &AudioDecoderOptions::default())?;
 
     let mut samples = Vec::new();
-    let mut sample_buffer = None;
+    let mut interleaved = Vec::new();
 
     loop {
         let packet = match format.next_packet() {
@@ -118,19 +117,12 @@ fn decode_audio_with_symphonia(
             Err(error) => return Err(error),
         };
 
-        let spec = *decoded.spec();
-        let channels = spec.channels.count();
-        let required_capacity = decoded.capacity() as u64;
-        let buffer =
-            sample_buffer.get_or_insert_with(|| SampleBuffer::<f32>::new(required_capacity, spec));
-        if buffer.capacity() < decoded.capacity() {
-            *buffer = SampleBuffer::<f32>::new(required_capacity, spec);
-        }
-        buffer.copy_interleaved_ref(decoded);
-        let interleaved = buffer.samples();
+        let channels = decoded.spec().channels.count();
+        interleaved.clear();
+        decoded.copy_to_vec_interleaved::<f32>(&mut interleaved);
 
         if channels == 1 {
-            samples.extend_from_slice(interleaved);
+            samples.extend_from_slice(&interleaved);
             continue;
         }
 
