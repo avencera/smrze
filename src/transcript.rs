@@ -77,11 +77,12 @@ pub fn build_word_timings(tokens: &[TranscriptToken]) -> Vec<TranscriptWord> {
     let mut last_end_ms = None;
 
     for token in tokens.iter().filter(|token| !token.text.trim().is_empty()) {
-        if token_starts_new_word(&token.text) && current.has_text() {
-            if let Some(word) = current.finish(last_end_ms) {
-                last_end_ms = Some(word.end_ms);
-                words.push(word);
-            }
+        if token_starts_new_word(&token.text)
+            && current.has_text()
+            && let Some(word) = current.finish(last_end_ms)
+        {
+            last_end_ms = Some(word.end_ms);
+            words.push(word);
         }
 
         current.push(token);

@@ -5,8 +5,8 @@ use color_eyre::{
 use duct::cmd;
 use symphonia::core::codecs::audio::AudioDecoderOptions;
 use symphonia::core::errors::Error as SymphoniaError;
-use symphonia::core::formats::FormatOptions;
 use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 
@@ -79,22 +79,28 @@ fn decode_audio_with_symphonia(
         MetadataOptions::default(),
     )?;
     let track = format
-        .default_track()
+        .default_track(TrackType::Audio)
         .ok_or(SymphoniaError::Unsupported("no default audio track found"))?;
-    let sample_rate = track
+    let audio_params = track
         .codec_params
+        .as_ref()
+        .and_then(|params| params.audio())
+        .ok_or(SymphoniaError::Unsupported("no audio codec params found"))?
+        .clone();
+    let sample_rate = audio_params
         .sample_rate
         .ok_or(SymphoniaError::Unsupported("missing sample rate"))?;
     let track_id = track.id;
     let mut decoder = symphonia::default::get_codecs()
-        .make_audio_decoder(&track.codec_params, &AudioDecoderOptions::default())?;
+        .make_audio_decoder(&audio_params, &AudioDecoderOptions::default())?;
 
     let mut samples = Vec::new();
     let mut interleaved = Vec::new();
 
     loop {
         let packet = match format.next_packet() {
-            Ok(packet) => packet,
+            Ok(Some(packet)) => packet,
+            Ok(None) => break,
             Err(SymphoniaError::IoError(error))
                 if error.kind() == std::io::ErrorKind::UnexpectedEof =>
             {
@@ -107,7 +113,7 @@ fn decode_audio_with_symphonia(
             Err(error) => return Err(error),
         };
 
-        if packet.track_id() != track_id {
+        if packet.track_id != track_id {
             continue;
         }
 
@@ -117,7 +123,7 @@ fn decode_audio_with_symphonia(
             Err(error) => return Err(error),
         };
 
-        let channels = decoded.spec().channels.count();
+        let channels = decoded.spec().channels().count();
         interleaved.clear();
         decoded.copy_to_vec_interleaved::<f32>(&mut interleaved);
 
