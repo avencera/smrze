@@ -23,20 +23,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Rust target
-        run: rustup target add ${{ env.TARGET }}
-
-      - name: Cache Cargo
-        uses: actions/cache@v4
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-            apple-foundation-models/.build
-          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles('**/Cargo.lock', 'apple-foundation-models/Package.resolved') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-cargo-
+          targets: ${{ env.TARGET }}
+
+      - name: Cache Rust builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          cache-bin: false
+          prefix-key: v1-rust
 
       - name: Install Metal Toolchain
         run: |
