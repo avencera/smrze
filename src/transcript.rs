@@ -110,6 +110,15 @@ pub fn render_word_lines(words: &[TranscriptWord]) -> String {
         .join("\n")
 }
 
+pub fn render_plain_transcript(tokens: &[TranscriptToken]) -> String {
+    tokens
+        .iter()
+        .map(|token| token.text.as_str())
+        .collect::<String>()
+        .trim()
+        .to_owned()
+}
+
 pub fn parse_transcript(text: &str) -> Option<Vec<SpeakerTurn>> {
     let mut structured_turns = Vec::new();
     for line in text.lines() {
@@ -268,8 +277,8 @@ impl PendingWord {
 #[cfg(test)]
 mod tests {
     use super::{
-        TranscriptToken, TranscriptWord, format_timestamp, parse_transcript, render_transcript,
-        render_word_lines, transcript_turns_json,
+        TranscriptToken, TranscriptWord, format_timestamp, parse_transcript,
+        render_plain_transcript, render_transcript, render_word_lines, transcript_turns_json,
     };
     use crate::speakers::SpeakerTurn;
 
@@ -456,5 +465,22 @@ mod tests {
             end_ms: 1567,
         }]);
         assert_eq!(text, "[00:00:01.234-00:00:01.567] hello");
+    }
+
+    #[test]
+    fn renders_plain_transcript_from_token_text() {
+        let text = render_plain_transcript(&[
+            TranscriptToken {
+                text: " hello".to_owned(),
+                start: 0.0,
+                end: 0.1,
+            },
+            TranscriptToken {
+                text: " world".to_owned(),
+                start: 0.1,
+                end: 0.2,
+            },
+        ]);
+        assert_eq!(text, "hello world");
     }
 }

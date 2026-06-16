@@ -4,7 +4,7 @@ mod pipeline;
 use color_eyre::Result;
 use tracing::debug;
 
-use crate::cache::CachedTranscript;
+use crate::cache::{CachedPlainTranscript, CachedTranscript};
 use crate::cli::{TranscriptArgs, TranscriptFormat, TranscriptMode, TranscriptionMode};
 use crate::input::resolve_media_input;
 use crate::output::{commit_output, open_path, stage_named_output};
@@ -22,8 +22,13 @@ pub(super) fn run_transcript(
     debug!("Starting transcript command for {}", args.input);
     let resolved_input = resolve_media_input(&args.input)?;
     let pipeline = TranscriptionPipeline::new(app_paths, force, selected_transcription_mode(args));
-    let transcript = pipeline.transcribe_resolved_input(&resolved_input)?;
-    let output = render_transcript_output(selected_transcript_output(args), &transcript)?;
+    let output = if args.no_timestamps {
+        let transcript = pipeline.transcribe_plain_resolved_input(&resolved_input)?;
+        render_plain_transcript_output(&transcript)
+    } else {
+        let transcript = pipeline.transcribe_resolved_input(&resolved_input)?;
+        render_transcript_output(selected_transcript_output(args), &transcript)?
+    };
 
     write_transcript_output(run_paths, args.open, &output)
 }
@@ -59,6 +64,13 @@ fn selected_transcript_output(args: &TranscriptArgs) -> SelectedTranscriptOutput
 
 fn selected_transcription_mode(args: &TranscriptArgs) -> TranscriptionMode {
     args.transcription_mode.unwrap_or(TranscriptionMode::Vad)
+}
+
+fn render_plain_transcript_output(transcript: &CachedPlainTranscript) -> RenderedTranscriptOutput {
+    RenderedTranscriptOutput {
+        file_name: "transcript.txt",
+        content: transcript.transcript.clone(),
+    }
 }
 
 fn render_transcript_output(
@@ -103,9 +115,10 @@ struct RenderedTranscriptOutput {
 #[cfg(test)]
 mod tests {
     use super::{
-        render_transcript_output, selected_transcript_output, selected_transcription_mode,
+        render_plain_transcript_output, render_transcript_output, selected_transcript_output,
+        selected_transcription_mode,
     };
-    use crate::cache::CachedTranscript;
+    use crate::cache::{CachedPlainTranscript, CachedTranscript};
     use crate::cli::{Command, TranscriptFormat, TranscriptMode, TranscriptionMode};
     use crate::speakers::SpeakerTurn;
     use crate::transcript::TranscriptToken;
@@ -128,6 +141,12 @@ mod tests {
                 start: 1.0,
                 end: 1.3,
             }],
+        }
+    }
+
+    fn sample_plain_transcript() -> CachedPlainTranscript {
+        CachedPlainTranscript {
+            transcript: "Hello world".to_owned(),
         }
     }
 
@@ -162,6 +181,13 @@ mod tests {
             panic!("expected transcript command");
         };
         assert_eq!(selected_transcription_mode(&args), TranscriptionMode::Fast);
+    }
+
+    #[test]
+    fn no_timestamps_uses_plain_transcript_output() {
+        let rendered = render_plain_transcript_output(&sample_plain_transcript());
+        assert_eq!(rendered.file_name, "transcript.txt");
+        assert_eq!(rendered.content, "Hello world");
     }
 
     #[test]

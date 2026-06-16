@@ -86,6 +86,9 @@ pub struct TranscriptArgs {
     /// Transcription mode used by the ASR pipeline
     #[arg(short = 'm', long = "transcription-mode", value_enum)]
     pub transcription_mode: Option<TranscriptionMode>,
+    /// Print only transcript text without timestamps or speaker diarization
+    #[arg(long, conflicts_with_all = ["mode", "format"])]
+    pub no_timestamps: bool,
     /// Transcript output mode
     #[arg(long, value_enum)]
     pub mode: Option<TranscriptMode>,
@@ -205,6 +208,40 @@ mod tests {
         assert_eq!(args.transcription_mode, Some(TranscriptionMode::Fast));
         assert_eq!(args.mode, Some(TranscriptMode::Word));
         assert_eq!(args.format, Some(TranscriptFormat::Json));
+    }
+
+    #[test]
+    fn no_timestamps_parses() {
+        let cli = Cli::parse_from(["smrze", "transcript", "input.wav", "--no-timestamps"]);
+        let Command::Transcript(args) = cli.command else {
+            panic!("expected transcript command");
+        };
+        assert!(args.no_timestamps);
+    }
+
+    #[test]
+    fn no_timestamps_conflicts_with_structured_output_options() {
+        let error = Cli::try_parse_from([
+            "smrze",
+            "transcript",
+            "input.wav",
+            "--no-timestamps",
+            "--mode",
+            "word",
+        ])
+        .expect_err("--no-timestamps should conflict with --mode");
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+
+        let error = Cli::try_parse_from([
+            "smrze",
+            "transcript",
+            "input.wav",
+            "--no-timestamps",
+            "--format",
+            "json",
+        ])
+        .expect_err("--no-timestamps should conflict with --format");
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 
     #[test]

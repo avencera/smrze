@@ -29,6 +29,11 @@ pub struct CachedTranscript {
 }
 
 #[derive(Debug, Clone)]
+pub struct CachedPlainTranscript {
+    pub transcript: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct TranscriptCacheEntry<'a> {
     pub cache_key: &'a str,
     pub source_key: &'a str,
@@ -36,6 +41,14 @@ pub struct TranscriptCacheEntry<'a> {
     pub transcript: &'a str,
     pub turns: &'a [SpeakerTurn],
     pub tokens: &'a [TranscriptToken],
+}
+
+#[derive(Debug, Clone)]
+pub struct PlainTranscriptCacheEntry<'a> {
+    pub cache_key: &'a str,
+    pub source_key: &'a str,
+    pub display_name: &'a str,
+    pub transcript: &'a str,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -48,6 +61,15 @@ struct TranscriptManifest {
     turns_file_name: String,
     #[serde(default)]
     tokens_file_name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PlainTranscriptManifest {
+    created_at_ms: u64,
+    source_key: String,
+    display_name: String,
+    transcript_hash: String,
+    transcript_file_name: String,
 }
 
 pub(crate) fn load_transcript(
@@ -108,6 +130,31 @@ pub(crate) fn load_transcript(
     }))
 }
 
+pub(crate) fn load_plain_transcript(
+    app_paths: &AppPaths,
+    cache_key: &str,
+) -> Result<Option<CachedPlainTranscript>> {
+    let Some(manifest) =
+        load_manifest::<PlainTranscriptManifest>(app_paths, &TRANSCRIPT_CACHE_SPEC, cache_key)?
+    else {
+        return Ok(None);
+    };
+
+    let transcript_path = cache_file_path(
+        app_paths,
+        &TRANSCRIPT_CACHE_SPEC,
+        cache_key,
+        &manifest.transcript_file_name,
+    );
+    if !transcript_path.exists() {
+        return Ok(None);
+    }
+
+    let transcript = fs::read_to_string(&transcript_path)
+        .with_context(|| format!("failed to read {}", transcript_path.display()))?;
+    Ok(Some(CachedPlainTranscript { transcript }))
+}
+
 pub fn load_cached_transcript(
     app_paths: &AppPaths,
     cache_key: &str,
@@ -119,6 +166,20 @@ pub fn load_cached_transcript(
         cache_key,
         force,
         load_transcript,
+    )
+}
+
+pub fn load_cached_plain_transcript(
+    app_paths: &AppPaths,
+    cache_key: &str,
+    force: bool,
+) -> Result<Option<CachedPlainTranscript>> {
+    load_cache_entry(
+        app_paths,
+        &TRANSCRIPT_CACHE_SPEC,
+        cache_key,
+        force,
+        load_plain_transcript,
     )
 }
 
@@ -145,13 +206,40 @@ pub fn store_transcript(app_paths: &AppPaths, entry: TranscriptCacheEntry<'_>) -
     Ok(())
 }
 
+pub fn store_plain_transcript(
+    app_paths: &AppPaths,
+    entry: PlainTranscriptCacheEntry<'_>,
+) -> Result<()> {
+    let entry_dir = ensure_cache_entry_dir(app_paths, &TRANSCRIPT_CACHE_SPEC, entry.cache_key)?;
+    let transcript_path = entry_dir.join("transcript.txt");
+    write_text_file(&transcript_path, entry.transcript)?;
+    write_manifest(
+        &entry_dir.join(MANIFEST_FILE_NAME),
+        &PlainTranscriptManifest {
+            created_at_ms: now_millis_u64()?,
+            source_key: entry.source_key.to_owned(),
+            display_name: entry.display_name.to_owned(),
+            transcript_hash: hash_string(entry.transcript),
+            transcript_file_name: "transcript.txt".to_owned(),
+        },
+    )?;
+    Ok(())
+}
+
 pub fn transcript_cache_key(source_key: &str, transcription_mode: &str) -> String {
     format!("{source_key}\n{transcription_mode}")
 }
 
+pub fn plain_transcript_cache_key(source_key: &str, transcription_mode: &str) -> String {
+    format!("{source_key}\n{transcription_mode}\nplain")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{TranscriptCacheEntry, load_transcript, store_transcript, transcript_cache_key};
+    use super::{
+        PlainTranscriptCacheEntry, TranscriptCacheEntry, load_plain_transcript, load_transcript,
+        plain_transcript_cache_key, store_plain_transcript, store_transcript, transcript_cache_key,
+    };
     use crate::cache::{MANIFEST_FILE_NAME, cache_entry_dir};
     use crate::paths::AppPaths;
     use crate::speakers::SpeakerTurn;
@@ -221,6 +309,48 @@ mod tests {
     fn transcript_cache_key_varies_by_mode() {
         assert_ne!(
             transcript_cache_key("source-key", "fast"),
+            transcript_cache_key("source-key", "vad")
+        );
+    }
+
+    #[test]
+    fn plain_transcript_cache_round_trip_preserves_manifest_shape() -> Result<()> {
+        let app_paths = test_paths("smrze-cache-plain-transcript-round-trip");
+        store_plain_transcript(
+            &app_paths,
+            PlainTranscriptCacheEntry {
+                cache_key: "source-key\nvad\nplain",
+                source_key: "source-key",
+                display_name: "meeting",
+                transcript: "Hello world",
+            },
+        )?;
+
+        let cached_transcript = load_plain_transcript(&app_paths, "source-key\nvad\nplain")?
+            .expect("plain transcript cache should load");
+        assert_eq!(cached_transcript.transcript, "Hello world");
+
+        let manifest_path = cache_entry_dir(
+            &app_paths,
+            &crate::cache::TRANSCRIPT_CACHE_SPEC,
+            "source-key\nvad\nplain",
+        )
+        .join(MANIFEST_FILE_NAME);
+        let manifest: Value = serde_json::from_str(&fs::read_to_string(&manifest_path)?)?;
+        assert_eq!(manifest["source_key"], "source-key");
+        assert_eq!(manifest["display_name"], "meeting");
+        assert_eq!(manifest["transcript_file_name"], "transcript.txt");
+        assert!(manifest["transcript_hash"].as_str().is_some());
+        assert!(manifest.get("turns_file_name").is_none());
+
+        let _ = fs::remove_dir_all(&app_paths.cache_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn plain_transcript_cache_key_varies_by_kind() {
+        assert_ne!(
+            plain_transcript_cache_key("source-key", "vad"),
             transcript_cache_key("source-key", "vad")
         );
     }

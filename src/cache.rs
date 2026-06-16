@@ -9,8 +9,9 @@ pub use audio::{AudioCacheEntry, CachedAudio, load_cached_audio, store_audio};
 pub use summary::{SummaryCacheEntry, load_cached_summary, store_summary, summary_cache_key};
 pub use sweeper::spawn_cache_sweeper;
 pub use transcript::{
-    CachedTranscript, TranscriptCacheEntry, load_cached_transcript, store_transcript,
-    transcript_cache_key,
+    CachedPlainTranscript, CachedTranscript, PlainTranscriptCacheEntry, TranscriptCacheEntry,
+    load_cached_plain_transcript, load_cached_transcript, plain_transcript_cache_key,
+    store_plain_transcript, store_transcript, transcript_cache_key,
 };
 
 pub(crate) use audio::AUDIO_CACHE_SPEC;

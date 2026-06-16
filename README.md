@@ -11,7 +11,7 @@ The project is still early. Commands, setup, output shape, and model requirement
 - Convert and decode media with `ffmpeg`
 - Run transcription and speaker diarization locally
 - Print results to stdout or write files into an output directory
-- Produce transcript output as text, speaker turn JSON, word timing JSON, or timestamped word text
+- Produce transcript output as plain text, diarized text, speaker turn JSON, word timing JSON, or timestamped word text
 - Summarize existing transcript files, media files, or remote media URLs
 - Use Apple Foundation Models for summaries by default
 - Fall back to Gemma 4 E2B when Apple Foundation Models refuse a transcript
@@ -30,6 +30,12 @@ Generate a transcript from a URL and write `transcript.txt` into an output direc
 
 ```sh
 smrze transcript "https://example.com/video" --output ./out
+```
+
+Generate a plain transcript without timestamps or speaker diarization:
+
+```sh
+smrze transcript ./meeting.wav --no-timestamps
 ```
 
 Write word-level timing output as JSON:
