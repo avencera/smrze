@@ -7,7 +7,7 @@ use color_eyre::{
 };
 use smrze_build_support::{
     blake3_file, build_mlx_metallib, current_runtime_arch_dir, current_xcode_arch,
-    ensure_local_mlx_repo, ensure_metal_toolchain, mlx_repo_revision,
+    ensure_metal_toolchain, ensure_mlx_swift_checkout, mlx_repo_revision,
 };
 
 const HF_RUNTIME_REPO: &str = "avencera/smrze-runtime-assets";
@@ -92,7 +92,7 @@ fn publish_mlx_metallib() -> Result<()> {
         .parent()
         .ok_or_else(|| eyre!("workspace root should have a parent"))?
         .join("mlx-swift");
-    ensure_local_mlx_repo(&mlx_repo_dir)?;
+    ensure_mlx_swift_checkout(&mlx_repo_dir)?;
     ensure_metal_toolchain()?;
 
     let derived_data_dir = workspace_root.join("target/mlx-runtime-assets");
